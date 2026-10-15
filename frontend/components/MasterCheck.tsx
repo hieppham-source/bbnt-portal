@@ -27,7 +27,7 @@ export default function MasterCheck() {
       setError(null)
     } catch (e) {
       const err = e as ApiError
-      if (!handleAuthError(err.status)) setError(err.message)
+      if (!handleAuthError(err.status, err.code)) setError(err.message)
     } finally {
       setLoading(false)
     }
@@ -61,11 +61,10 @@ export default function MasterCheck() {
               .join(" · ")}
             {data.loaded_at && ` · đọc lúc ${new Date(data.loaded_at).toLocaleString("vi-VN")}`}
           </p>
-          {data.service_account_email && (
-            <p className="hint">
-              Share Sheet master và file order quyền Người xem cho: <code>{data.service_account_email}</code>
-            </p>
-          )}
+          <p className="hint">
+            Tool đọc Sheet bằng tài khoản Google của từng người: ai dùng tool phải mở được Sheet master và file order
+            của mình.
+          </p>
           {data.issues.length > 0 && (
             <table className="issues">
               <thead>

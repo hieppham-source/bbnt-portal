@@ -1,20 +1,26 @@
 "use client"
 
 import { signIn, useSession } from "next-auth/react"
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 
-/** ID token Google của người đang đăng nhập; hết phiên / làm mới thất bại -> đăng nhập lại. */
-export function useIdToken(): string | undefined {
+import type { Tokens } from "@/lib/api"
+
+/** Token Google của người đang đăng nhập (ID token để xác thực + access token để đọc Sheet).
+ *  Hết phiên / làm mới thất bại -> đăng nhập lại. */
+export function useIdToken(): Tokens | undefined {
   const { data, status } = useSession()
   useEffect(() => {
     if (status === "unauthenticated" || data?.error === "RefreshTokenError") void signIn("google")
   }, [status, data?.error])
-  return data?.error ? undefined : data?.idToken
+  const idToken = data?.error ? undefined : data?.idToken
+  const accessToken = data?.accessToken
+  return useMemo(() => (idToken ? { idToken, accessToken } : undefined), [idToken, accessToken])
 }
 
-/** Backend trả 401 (token hết hạn / sai) -> đăng nhập lại. */
-export function handleAuthError(status: number): boolean {
-  if (status === 401) {
+/** Backend trả 401 (token hết hạn / sai) -> đăng nhập lại. Riêng GOOGLE_SCOPE_MISSING (người dùng bỏ tích
+ *  quyền Google Sheets lúc đăng nhập) thì hiện lỗi thay vì đăng nhập lại liên tục. */
+export function handleAuthError(status: number, code?: string): boolean {
+  if (status === 401 && code !== "GOOGLE_SCOPE_MISSING") {
     void signIn("google")
     return true
   }

@@ -16,7 +16,14 @@ from typing import Any
 
 from app.core.calculation import normalize_text
 from app.errors import BbntError, fail
-from app.services.sheets import GoogleSheetsReader, SheetAccessError, SheetRef, read_xlsx_tabs, xlsx_sheet_names
+from app.services.sheets import (
+    GoogleSheetsReader,
+    SheetAccessError,
+    SheetAuthError,
+    SheetRef,
+    read_xlsx_tabs,
+    xlsx_sheet_names,
+)
 
 from .loader import TABS, load_master
 from .models import MasterData
@@ -52,21 +59,37 @@ def build_master(tables: Tables, now: datetime | None = None) -> MasterData:
 
 
 class MasterRepository:
-    def __init__(self, source: TablesSource, ttl_seconds: float = 60,
+    """``source`` mặc định có thể là None (chế độ OAuth: chỉ đọc được Sheet master khi có token của người dùng,
+    truyền vào :meth:`get` qua tham số ``source``)."""
+
+    def __init__(self, source: TablesSource | None, ttl_seconds: float = 60,
                  monotonic: Callable[[], float] = time.monotonic) -> None:
         self._source, self._ttl, self._mono = source, ttl_seconds, monotonic
         self._lock = threading.Lock()
         self._data: MasterData | None = None
         self._loaded_mono = 0.0
 
-    def get(self, refresh: bool = False) -> MasterData:
+    def peek(self) -> MasterData | None:
+        """Bản đang cache (có thể đã cũ), không đọc Sheet."""
+        return self._data
+
+    @property
+    def has_default_source(self) -> bool:
+        return self._source is not None
+
+    def get(self, refresh: bool = False, source: TablesSource | None = None) -> MasterData:
         with self._lock:
             fresh = self._data is not None and self._mono() - self._loaded_mono < self._ttl
             if fresh and not refresh:
                 assert self._data is not None
                 return self._data
+            src = source or self._source
+            if src is None:
+                raise fail("GOOGLE_TOKEN_MISSING", "Cần đăng nhập Google để đọc Sheet master", status=401)
             try:
-                tables = self._source()
+                tables = src()
+            except SheetAuthError as exc:
+                raise fail("GOOGLE_TOKEN_EXPIRED", str(exc), status=401) from exc
             except SheetAccessError as exc:
                 if self._data is not None and not refresh:
                     log.warning("Không tải lại được Sheet master, dùng bản cache cũ: %s", exc)

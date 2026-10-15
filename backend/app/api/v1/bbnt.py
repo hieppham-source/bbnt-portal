@@ -13,11 +13,10 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
-from app.api.deps import User, get_generator, get_master_repo, get_sheet_reader, get_user
+from app.api.deps import MasterLoader, User, get_generator, get_master_loader, get_sheet_reader, get_user
 from app.core.calculation import RowIssue
 from app.docx.vn_text import amount_in_words
 from app.errors import fail
-from app.master.repository import MasterRepository
 from app.schemas.bbnt import (
     BbntRequest,
     ContractOut,
@@ -28,7 +27,7 @@ from app.schemas.bbnt import (
     PreviewResponse,
 )
 from app.services.generator import DOCX_MIME, BbntGenerator, BbntResult, OrderReader
-from app.services.sheets import SheetAccessError, SheetReader, parse_sheet_url
+from app.services.sheets import SheetAccessError, SheetAuthError, SheetReader, parse_sheet_url
 
 router = APIRouter(prefix="/api/v1/bbnt", tags=["BBNT"])
 
@@ -56,14 +55,16 @@ def order_reader(sheets: SheetReader, url: str) -> OrderReader:
     def read(sheet_name: str | None) -> list[list[Any]]:
         try:
             return sheets.read(ref, sheet_name=sheet_name)
+        except SheetAuthError as exc:
+            raise fail("GOOGLE_TOKEN_EXPIRED", str(exc), status=401) from exc
         except SheetAccessError as exc:
             raise fail("ORDER_SHEET_UNREADABLE", str(exc), status=502) from exc
     return read
 
 
-def _run(payload: BbntRequest, repo: MasterRepository, sheets: SheetReader, gen: BbntGenerator,
+def _run(payload: BbntRequest, load_master: MasterLoader, sheets: SheetReader, gen: BbntGenerator,
          render: bool, refresh: bool) -> BbntResult:
-    master = repo.get(refresh=refresh)
+    master = load_master(refresh)
     return gen.run(master, payload.to_input(), order_reader(sheets, payload.order_sheet_url), render=render)
 
 
@@ -93,7 +94,7 @@ def to_preview(r: BbntResult) -> PreviewResponse:
 
 
 UserDep = Annotated[User, Depends(get_user)]
-RepoDep = Annotated[MasterRepository, Depends(get_master_repo)]
+MasterDep = Annotated[MasterLoader, Depends(get_master_loader)]
 SheetsDep = Annotated[SheetReader, Depends(get_sheet_reader)]
 GenDep = Annotated[BbntGenerator, Depends(get_generator)]
 RefreshQ = Annotated[bool, Query(description="Đọc lại Sheet master ngay, bỏ qua cache")]
@@ -101,16 +102,16 @@ RefreshQ = Annotated[bool, Query(description="Đọc lại Sheet master ngay, b�
 
 @router.post("/preview", response_model=PreviewResponse, responses=_ERRORS,
              summary="Xem trước số BBNT + số liệu (không tạo file)")
-def preview_bbnt(payload: BbntRequest, user: UserDep, repo: RepoDep, sheets: SheetsDep, gen: GenDep,
+def preview_bbnt(payload: BbntRequest, user: UserDep, load_master: MasterDep, sheets: SheetsDep, gen: GenDep,
                  refresh: RefreshQ = False) -> PreviewResponse:
-    return to_preview(_run(payload, repo, sheets, gen, render=False, refresh=refresh))
+    return to_preview(_run(payload, load_master, sheets, gen, render=False, refresh=refresh))
 
 
 @router.post("/generate", responses={200: {"content": {DOCX_MIME: {}}}, **_ERRORS},
              response_class=Response, summary="Tạo & tải file BBNT .docx (server không lưu)")
-def generate_bbnt(payload: BbntRequest, user: UserDep, repo: RepoDep, sheets: SheetsDep, gen: GenDep,
+def generate_bbnt(payload: BbntRequest, user: UserDep, load_master: MasterDep, sheets: SheetsDep, gen: GenDep,
                   refresh: RefreshQ = False) -> Response:
-    r = _run(payload, repo, sheets, gen, render=True, refresh=refresh)
+    r = _run(payload, load_master, sheets, gen, render=True, refresh=refresh)
     assert r.content is not None
     number = str(r.number)
     name = download_filename(number)

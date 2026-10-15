@@ -7,8 +7,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Google({
       authorization: {
-        // access_type=offline + prompt=consent -> Google cấp refresh token để làm mới ID token (hết hạn sau 1 giờ)
-        params: { hd: DOMAIN, access_type: "offline", prompt: "consent", scope: "openid email profile" },
+        // access_type=offline + prompt=consent -> Google cấp refresh token để làm mới token (hết hạn sau 1 giờ).
+        // spreadsheets.readonly: backend đọc Sheet master + file order bằng quyền của chính người dùng
+        // (không cần service account) — ai mở được Sheet nào trên Drive thì tool đọc được Sheet đó.
+        params: {
+          hd: DOMAIN,
+          access_type: "offline",
+          prompt: "consent",
+          scope: "openid email profile https://www.googleapis.com/auth/spreadsheets.readonly",
+        },
       },
     }),
   ],
@@ -28,6 +35,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return {
           ...token,
           id_token: account.id_token,
+          access_token: account.access_token,
           expires_at: account.expires_at,
           refresh_token: account.refresh_token,
           error: undefined,
@@ -49,6 +57,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return {
         ...token,
         id_token: data.id_token ?? token.id_token,
+        access_token: data.access_token ?? token.access_token,
         expires_at: Math.floor(Date.now() / 1000 + data.expires_in),
         refresh_token: data.refresh_token ?? token.refresh_token,
         error: undefined,
@@ -58,6 +67,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return {
         ...session,
         idToken: token.id_token as string | undefined,
+        accessToken: token.access_token as string | undefined,
         error: token.error as "RefreshTokenError" | undefined,
       }
     },

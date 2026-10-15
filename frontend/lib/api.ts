@@ -43,7 +43,6 @@ export type MasterOut = {
 export type MasterCheckOut = {
   loaded_at: string | null
   ok: boolean
-  service_account_email: string | null
   counts: Record<string, number>
   issues: { tab: string; row: number; severity: "ERROR" | "WARNING"; message: string }[]
 }
@@ -100,6 +99,9 @@ export type PreviewOut = {
   warnings: RowIssue[]
 }
 
+/** idToken: xác thực với backend. accessToken: backend đọc Google Sheet bằng quyền của người dùng. */
+export type Tokens = { idToken: string; accessToken?: string }
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -111,13 +113,18 @@ export class ApiError extends Error {
   }
 }
 
-async function call(idToken: string, path: string, init: RequestInit = {}): Promise<Response> {
+async function call(t: Tokens, path: string, init: RequestInit = {}): Promise<Response> {
   if (!API) throw new ApiError("Thiếu NEXT_PUBLIC_API_BASE_URL", 0, "CONFIG")
   let res: Response
   try {
     res = await fetch(`${API}${path}`, {
       ...init,
-      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json", ...init.headers },
+      headers: {
+        Authorization: `Bearer ${t.idToken}`,
+        ...(t.accessToken ? { "X-Google-Access-Token": t.accessToken } : {}),
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
     })
   } catch {
     throw new ApiError("Không kết nối được máy chủ (có thể đang khởi động, thử lại sau 1 phút)", 0, "NETWORK")
@@ -133,20 +140,20 @@ async function call(idToken: string, path: string, init: RequestInit = {}): Prom
   return res
 }
 
-export const getMaster = (t: string, refresh = false): Promise<MasterOut> =>
+export const getMaster = (t: Tokens, refresh = false): Promise<MasterOut> =>
   call(t, `/api/v1/master${refresh ? "?refresh=true" : ""}`).then((r) => r.json())
 
-export const checkMaster = (t: string): Promise<MasterCheckOut> =>
+export const checkMaster = (t: Tokens): Promise<MasterCheckOut> =>
   call(t, "/api/v1/master/check").then((r) => r.json())
 
-export const previewBbnt = (t: string, body: BbntRequest, refresh = false): Promise<PreviewOut> =>
+export const previewBbnt = (t: Tokens, body: BbntRequest, refresh = false): Promise<PreviewOut> =>
   call(t, `/api/v1/bbnt/preview${refresh ? "?refresh=true" : ""}`, {
     method: "POST",
     body: JSON.stringify(body),
   }).then((r) => r.json())
 
 /** Tạo và tải .docx ngay — server không lưu, không có link tải lại. Trả về số BBNT. */
-export async function generateBbnt(t: string, body: BbntRequest): Promise<string> {
+export async function generateBbnt(t: Tokens, body: BbntRequest): Promise<string> {
   const res = await call(t, "/api/v1/bbnt/generate", { method: "POST", body: JSON.stringify(body) })
   const cd = res.headers.get("Content-Disposition") ?? ""
   const name = decodeURIComponent(/filename\*=UTF-8''([^;]+)/.exec(cd)?.[1] ?? "BBNT.docx")

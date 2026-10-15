@@ -218,6 +218,5 @@ class MasterOut(BaseModel):
 class MasterCheckOut(BaseModel):
     loaded_at: datetime | None
     ok: bool
-    service_account_email: str | None
     counts: dict[str, int]
     issues: list[MasterIssueOut]

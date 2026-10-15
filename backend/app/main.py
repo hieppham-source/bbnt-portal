@@ -46,7 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=False,                 # xác thực bằng Bearer token, không dùng cookie cross-site
         allow_methods=["GET", "POST", "OPTIONS"],
         # X-User-Email chỉ mở khi chạy local với DEV_AUTH_HEADER=true (frontend dev không cần Google)
-        allow_headers=["Authorization", "Content-Type"]
+        allow_headers=["Authorization", "Content-Type", "X-Google-Access-Token"]
         + (["X-User-Email"] if settings.dev_auth_header and not settings.is_production else []),
         expose_headers=EXPOSED_HEADERS,
         max_age=600,
@@ -61,13 +61,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/readyz", include_in_schema=False)
     def readyz() -> JSONResponse:
-        """Readiness: đọc được Sheet master + template parse được. Không lộ chi tiết lỗi ra ngoài."""
+        """Readiness: template parse được + Sheet master (nếu đọc được không cần người dùng). Không lộ chi tiết lỗi."""
         checks: dict[str, str] = {}
         try:
             override = app.dependency_overrides.get(deps.get_master_repo)
             repo = override() if override else deps.master_repo_for(settings)
-            master = repo.get()
-            checks["master"] = "ok" if not master.errors else f"{len(master.errors)} dòng lỗi"
+            if repo.has_default_source:
+                master = repo.get()
+                checks["master"] = "ok" if not master.errors else f"{len(master.errors)} dòng lỗi"
+            else:   # chế độ OAuth: master chỉ đọc được khi có người dùng đăng nhập
+                cached = repo.peek()
+                checks["master"] = "chưa tải" if cached is None else (
+                    "ok" if not cached.errors else f"{len(cached.errors)} dòng lỗi")
         except Exception:  # noqa: BLE001
             log.exception("readyz: master check failed")
             checks["master"] = "error"

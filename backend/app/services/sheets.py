@@ -1,4 +1,4 @@
-"""Đọc Google Sheets bằng service account: file order (link do user dán) và Sheet master."""
+"""Đọc Google Sheets bằng OAuth2 access token của người dùng: file order (link do user dán) và Sheet master."""
 from __future__ import annotations
 
 import re
@@ -10,7 +10,11 @@ _SHEET_PATH = re.compile(r"^/spreadsheets/d/([A-Za-z0-9_-]{20,})")
 
 
 class SheetAccessError(RuntimeError):
-    """Không đọc được sheet (chưa share cho service account, sai gid, Google lỗi...)."""
+    """Không đọc được sheet (chưa có quyền xem, sai gid, Google lỗi...)."""
+
+
+class SheetAuthError(SheetAccessError):
+    """Access token Google của người dùng hết hạn / bị thu hồi -> cần đăng nhập lại."""
 
 
 @dataclass(frozen=True)
@@ -45,44 +49,42 @@ class SheetReader(Protocol):
 
 
 class GoogleSheetsReader:
-    """Sheets API v4 bằng service account (file JSON). Sheet phải được share cho email service account.
+    """Google Sheets API v4 bằng **OAuth2 access token của người dùng** (scope ``spreadsheets.readonly``).
+
+    Frontend Next.js xin quyền này lúc đăng nhập Google và gửi token kèm mỗi request (``X-Google-Access-Token``).
+    Ai mở được Sheet nào trên Drive thì tool đọc được Sheet đó cho người đó — không dùng service account.
+    Token chỉ sống trong request, không lưu, không ghi log.
 
     Ưu tiên tab theo ``gid`` trong link; không có gid thì dùng ``sheet_name`` của mapping; không có nữa thì tab đầu.
     """
 
     BASE = "https://sheets.googleapis.com/v4/spreadsheets"
-    SCOPES = ("https://www.googleapis.com/auth/spreadsheets.readonly",)
 
-    def __init__(self, credentials: Any, *, timeout: float = 30.0) -> None:
-        from google.auth.transport.requests import AuthorizedSession
+    def __init__(self, access_token: str, *, timeout: float = 30.0, session: Any = None) -> None:
+        if not access_token:
+            raise ValueError("Thiếu access token Google")
+        if session is None:
+            import requests
 
-        self._session = AuthorizedSession(credentials)  # type: ignore[no-untyped-call]
+            session = requests.Session()
+        session.headers["Authorization"] = f"Bearer {access_token}"
+        self._session: Any = session
         self._timeout = timeout
-        self.client_email: str | None = getattr(credentials, "service_account_email", None)
 
     @classmethod
-    def from_info(cls, info: dict[str, Any], **kw: Any) -> GoogleSheetsReader:
-        """Từ nội dung JSON key (biến môi trường ``GOOGLE_SERVICE_ACCOUNT_JSON``)."""
-        from google.oauth2 import service_account
+    def from_access_token(cls, token: str, **kw: Any) -> GoogleSheetsReader:
+        return cls(token, **kw)
 
-        creds = service_account.Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
-            info, scopes=cls.SCOPES)
-        return cls(creds, **kw)
-
-    @classmethod
-    def from_file(cls, path: str, **kw: Any) -> GoogleSheetsReader:
-        from google.oauth2 import service_account
-
-        creds = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
-            path, scopes=cls.SCOPES)
-        return cls(creds, **kw)
+    def _check(self, resp: Any, what: str = "sheet") -> None:
+        if resp.status_code == 401:
+            raise SheetAuthError("Phiên Google hết hạn — đăng nhập lại")
+        if resp.status_code in (403, 404):
+            raise SheetAccessError(f"Tài khoản của bạn không mở được {what} — kiểm tra link và nhờ chủ file "
+                                   "share quyền Người xem cho email của bạn")
 
     def _get(self, url: str, params: dict[str, str]) -> dict[str, Any]:
         resp = self._session.get(url, params=params, timeout=self._timeout)
-        if resp.status_code in (403, 404):
-            who = f" ({self.client_email})" if self.client_email else ""
-            raise SheetAccessError("Không truy cập được sheet — kiểm tra link và đã share quyền Xem cho "
-                                   f"service account{who}")
+        self._check(resp)
         if resp.status_code == 400:
             raise SheetAccessError("Không đọc được tab trong sheet — kiểm tra tên tab (mapping) hoặc gid trong link")
         if resp.status_code >= 400:
@@ -124,9 +126,7 @@ class GoogleSheetsReader:
                    ("majorDimension", "ROWS")]
         resp = self._session.get(f"{self.BASE}/{ref.spreadsheet_id}/values:batchGet", params=params,
                                  timeout=self._timeout)
-        if resp.status_code in (403, 404):
-            who = f" ({self.client_email})" if self.client_email else ""
-            raise SheetAccessError(f"Không truy cập được Sheet master — share quyền Xem cho service account{who}")
+        self._check(resp, "Sheet master")
         if resp.status_code >= 400:
             raise SheetAccessError(f"Google Sheets API lỗi {resp.status_code}")
         ranges = resp.json().get("valueRanges", [])

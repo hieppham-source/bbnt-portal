@@ -52,8 +52,8 @@ class FakeSheets:
     def read(self, ref: SheetRef, *, sheet_name: str | None = None) -> list[list[Any]]:
         self.calls.append((ref.spreadsheet_id, sheet_name))
         if ref.spreadsheet_id not in self.sheets:
-            raise SheetAccessError("Không truy cập được sheet — kiểm tra link và đã share quyền Xem cho "
-                                   "service account (bbnt@x.iam.gserviceaccount.com)")
+            raise SheetAccessError("Tài khoản của bạn không mở được sheet — kiểm tra link và nhờ chủ file "
+                                   "share quyền Người xem cho email của bạn")
         return copy.deepcopy(self.sheets[ref.spreadsheet_id])
 
 

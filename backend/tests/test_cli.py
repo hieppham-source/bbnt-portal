@@ -58,4 +58,4 @@ def test_check_with_master_file(monkeypatch, capsys):
         cli.get_settings.cache_clear()
     out = capsys.readouterr().out
     assert "2 hợp đồng" in out and "Template bbnt_ezs_fb_nonop.v2.docx: ok" in out
-    assert code == 1 and "Service account: CHƯA CÓ" in out        # local chưa có key Google
+    assert code == 0 and "OAuth" in out                          # không có service account: đọc bằng OAuth

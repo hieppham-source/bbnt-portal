@@ -11,11 +11,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import User, get_master_repo, get_user
-from app.config import Settings, get_settings
+from app.api.deps import MasterLoader, User, get_master_loader, get_user
 from app.core.numbering import to_vn_time
 from app.master.models import MasterData
-from app.master.repository import MasterRepository
 from app.schemas.bbnt import (
     BrandOut,
     ContractBriefOut,
@@ -63,19 +61,18 @@ def to_master_out(m: MasterData) -> MasterOut:
 
 @router.get("", response_model=MasterOut, summary="Dữ liệu master cho form tạo BBNT")
 def get_master(user: Annotated[User, Depends(get_user)],
-               repo: Annotated[MasterRepository, Depends(get_master_repo)],
+               load_master: Annotated[MasterLoader, Depends(get_master_loader)],
                refresh: RefreshQ = False) -> MasterOut:
-    return to_master_out(repo.get(refresh=refresh))
+    return to_master_out(load_master(refresh))
 
 
 @router.get("/check", response_model=MasterCheckOut, summary="Kiểm tra lỗi trong Sheet master")
 def check_master(user: Annotated[User, Depends(get_user)],
-                 repo: Annotated[MasterRepository, Depends(get_master_repo)],
-                 settings: Annotated[Settings, Depends(get_settings)],
+                 load_master: Annotated[MasterLoader, Depends(get_master_loader)],
                  refresh: RefreshQ = True) -> MasterCheckOut:
-    m = repo.get(refresh=refresh)
+    m = load_master(refresh)
     return MasterCheckOut(
-        loaded_at=m.loaded_at, ok=not m.errors, service_account_email=settings.service_account_email,
+        loaded_at=m.loaded_at, ok=not m.errors,
         counts={"entities": len(m.entities), "brands": len(m.brands), "contracts": len(m.contracts),
                 "mappings": len(m.mappings)},
         issues=[MasterIssueOut(tab=i.tab, row=i.row, severity=i.severity, message=i.message) for i in m.issues],

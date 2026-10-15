@@ -13,6 +13,8 @@ from fastapi import Depends, Header, HTTPException
 from app.auth import AuthError, GoogleIdTokenVerifier
 from app.config import Settings, get_settings
 from app.errors import fail
+from app.google_token import AccessTokenVerifier
+from app.master.models import MasterData
 from app.master.repository import MasterRepository, google_sheet_source, xlsx_source
 from app.services.generator import BbntGenerator
 from app.services.sheets import GoogleSheetsReader, SheetReader, parse_sheet_url
@@ -25,7 +27,7 @@ class User:
 
 
 _SINGLETONS: dict[tuple[str, int], tuple[Settings, Any]] = {}
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()   # build() có thể gọi lồng _per_settings
 
 
 def _per_settings(name: str, settings: Settings, build: Callable[[], Any]) -> Any:
@@ -39,34 +41,11 @@ def _per_settings(name: str, settings: Settings, build: Callable[[], Any]) -> An
         return hit[1]
 
 
-def google_reader_for(settings: Settings) -> GoogleSheetsReader | None:
-    def build() -> GoogleSheetsReader | None:
-        if settings.google_service_account:
-            return GoogleSheetsReader.from_info(dict(settings.google_service_account))
-        if settings.google_service_account_file:
-            return GoogleSheetsReader.from_file(settings.google_service_account_file)
-        return None
-    reader: GoogleSheetsReader | None = _per_settings("google", settings, build)
-    return reader
-
-
-def get_sheet_reader(settings: Annotated[Settings, Depends(get_settings)]) -> SheetReader:
-    reader = google_reader_for(settings)
-    if reader is None:
-        raise fail("SHEETS_NOT_CONFIGURED", "Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON", status=500)
-    return reader
-
-
 def master_repo_for(settings: Settings) -> MasterRepository:
+    """Cache Sheet master dùng chung cho cả app. Nguồn mặc định chỉ có khi chạy local với MASTER_FILE;
+    với Google Sheet, mỗi lần cache hết hạn sẽ đọc lại bằng token của người đang gọi (:func:`get_master_loader`)."""
     def build() -> MasterRepository:
-        if settings.master_sheet_url:
-            reader = google_reader_for(settings)
-            if reader is None:
-                raise fail("SHEETS_NOT_CONFIGURED", "Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON", status=500)
-            source = google_sheet_source(reader, parse_sheet_url(settings.master_sheet_url))
-        else:
-            assert settings.master_file
-            source = xlsx_source(settings.master_file)
+        source = xlsx_source(settings.master_file) if (settings.master_file and not settings.master_sheet_url) else None
         return MasterRepository(source, ttl_seconds=settings.master_cache_seconds)
     repo: MasterRepository = _per_settings("master", settings, build)
     return repo
@@ -128,3 +107,56 @@ def get_user(
         return User(x_user_email.strip().lower())
     raise HTTPException(401, detail={"code": "UNAUTHENTICATED", "message": "Cần đăng nhập"},
                         headers={"WWW-Authenticate": "Bearer"})
+
+
+# =============================================================================
+# Google OAuth2 access token -> đọc Google Sheets (thay cho service account)
+# =============================================================================
+def get_access_token_verifier(settings: Annotated[Settings, Depends(get_settings)]) -> AccessTokenVerifier | None:
+    """Có GOOGLE_OAUTH_CLIENT_ID -> kiểm token qua Google tokeninfo. Local dev không có client ID -> bỏ qua."""
+    if not settings.google_oauth_client_ids:
+        return None
+    verifier: AccessTokenVerifier = _per_settings(
+        "access_token", settings, lambda: AccessTokenVerifier(settings.google_oauth_client_ids))
+    return verifier
+
+
+def get_google_access_token(
+    user: Annotated[User, Depends(get_user)],
+    verifier: Annotated[AccessTokenVerifier | None, Depends(get_access_token_verifier)],
+    x_google_access_token: Annotated[str | None, Header()] = None,
+) -> str:
+    """Access token OAuth2 của người đang đăng nhập (header ``X-Google-Access-Token``, frontend tự gửi).
+    Phải do app này cấp, đúng người, có scope spreadsheets.readonly."""
+    token = (x_google_access_token or "").strip()
+    if not token:
+        raise fail("GOOGLE_TOKEN_MISSING", "Thiếu quyền đọc Google Sheet — đăng xuất rồi đăng nhập lại", status=401)
+    if verifier is not None:
+        verifier.verify(token, user.email)
+    return token
+
+
+def get_sheet_reader(token: Annotated[str, Depends(get_google_access_token)]) -> SheetReader:
+    return GoogleSheetsReader.from_access_token(token)
+
+
+MasterLoader = Callable[[bool], MasterData]
+
+
+def get_master_loader(
+    settings: Annotated[Settings, Depends(get_settings)],
+    repo: Annotated[MasterRepository, Depends(get_master_repo)],
+    user: Annotated[User, Depends(get_user)],
+    verifier: Annotated[AccessTokenVerifier | None, Depends(get_access_token_verifier)],
+    x_google_access_token: Annotated[str | None, Header()] = None,
+) -> MasterLoader:
+    """Đọc Sheet master (cache ``MASTER_CACHE_SECONDS``). Cache hết hạn -> đọc lại bằng token của người đang gọi."""
+    source = None
+    if settings.master_sheet_url:
+        token = get_google_access_token(user, verifier, x_google_access_token)
+        source = google_sheet_source(GoogleSheetsReader.from_access_token(token),
+                                     parse_sheet_url(settings.master_sheet_url))
+
+    def load(refresh: bool = False) -> MasterData:
+        return repo.get(refresh=refresh, source=source)
+    return load

@@ -6,10 +6,15 @@ CLI vận hành / chạy tay không cần web (Render › Shell, hoặc máy loc
         --order-url "https://docs.google.com/spreadsheets/d/.../edit#gid=0" --out ./out
     # Không cần Google: Sheet master + file order tải về dạng .xlsx
     python -m app.cli generate --master-file deploy/MASTER_BBNT_TEMPLATE.xlsx --order-file order.xlsx ...
+
+Đọc Google Sheet từ dòng lệnh: dùng access token OAuth2 của chính bạn:
+``--access-token`` / biến ``GOOGLE_ACCESS_TOKEN`` (lấy ở developers.google.com/oauthplayground, scope
+``https://www.googleapis.com/auth/spreadsheets.readonly``; token sống 1 giờ).
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -37,12 +42,10 @@ def _warn(msg: str) -> None:
 
 
 def _google_reader() -> GoogleSheetsReader:
-    s = get_settings()
-    if s.google_service_account:
-        return GoogleSheetsReader.from_info(dict(s.google_service_account))
-    if s.google_service_account_file:
-        return GoogleSheetsReader.from_file(s.google_service_account_file)
-    raise ConfigError("Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON / GOOGLE_SERVICE_ACCOUNT_FILE")
+    token = (os.environ.get("GOOGLE_ACCESS_TOKEN") or "").strip()
+    if not token:
+        raise ConfigError("Cần --access-token (hoặc biến GOOGLE_ACCESS_TOKEN) để đọc Google Sheet")
+    return GoogleSheetsReader.from_access_token(token)
 
 
 def _load_master(master_file: str | None) -> MasterData:
@@ -74,10 +77,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         failures += 1
         s = None
     if s is not None:
-        email = s.service_account_email
-        (_ok if email else _fail)(f"Service account: {email or 'CHƯA CÓ'}"
-                                  + ("  -> share Sheet master + file order cho email này (Người xem)" if email else ""))
-        failures += 0 if email else 1
+        _ok("Đọc Google Sheet bằng OAuth2 access token của người dùng (không dùng service account)")
         (_ok if s.google_oauth_client_ids else _warn)(f"OAuth client ID: {len(s.google_oauth_client_ids)} giá trị")
     try:
         m = _load_master(args.master_file)
@@ -164,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="Kiểm tra cấu hình, Sheet master, template")
     c.add_argument("--master-file", help="Dùng file .xlsx thay cho Sheet master")
+    c.add_argument("--access-token", help="Access token OAuth Google của bạn (đọc Sheet master)")
     c.set_defaults(fn=cmd_check)
 
     g = sub.add_parser("generate", help="Tạo 1 BBNT ra file .docx")
@@ -180,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--order-file")
     g.add_argument("--order-tab", help="Tên tab trong file order (ghi đè mapping)")
     g.add_argument("--master-file")
+    g.add_argument("--access-token", help="Access token OAuth Google của bạn (đọc Sheet master + file order)")
     g.add_argument("--templates-dir")
     g.add_argument("--collected-on-behalf", default="0")
     g.add_argument("--consulting-fee", default="0")
@@ -188,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--out", default=".")
     g.set_defaults(fn=cmd_generate)
     args = p.parse_args(argv)
+    if args.access_token:
+        os.environ["GOOGLE_ACCESS_TOKEN"] = args.access_token
     result: int = args.fn(args)
     return result
 

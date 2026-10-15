@@ -64,7 +64,7 @@ export default function BbntForm() {
         setEntity((e) => e || m.entities[0]?.code || "")
       } catch (e) {
         const err = e as ApiError
-        if (!handleAuthError(err.status)) setMasterErr({ message: err.message, code: err.code })
+        if (!handleAuthError(err.status, err.code)) setMasterErr({ message: err.message, code: err.code })
       } finally {
         setLoadingMaster(false)
       }
@@ -167,7 +167,7 @@ export default function BbntForm() {
       }
     } catch (e) {
       const err = e as ApiError
-      if (!handleAuthError(err.status)) setError({ message: err.message, code: err.code, details: err.details })
+      if (!handleAuthError(err.status, err.code)) setError({ message: err.message, code: err.code, details: err.details })
     } finally {
       setBusy(null)
     }
@@ -299,7 +299,7 @@ export default function BbntForm() {
             onChange={(e) => touch(setOrderUrl)(e.target.value)}
             placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0"
           />
-          <span className="hint">Sheet phải share quyền Người xem cho service account. Link có #gid=… thì tool đọc đúng tab đó.</span>
+          <span className="hint">Tài khoản Google của bạn phải mở được Sheet này. Link có #gid=… thì tool đọc đúng tab đó.</span>
         </label>
 
         <details>

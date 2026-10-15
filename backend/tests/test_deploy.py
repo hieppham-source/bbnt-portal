@@ -13,26 +13,13 @@ from fastapi.testclient import TestClient
 
 from app.api import deps
 from app.auth import AuthError, GoogleIdTokenVerifier
-from app.config import ConfigError, Settings, parse_service_account
+from app.config import ConfigError, Settings
 from app.main import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ID = "1234567890-abc.apps.googleusercontent.com"
 FRONTEND = "https://bbnt.hannaholala.com"
 MASTER_URL = "https://docs.google.com/spreadsheets/d/1MasterSheetIdAbCdEfGhIjKlMnOp/edit#gid=0"
-
-
-def _rsa_pem() -> str:
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    return key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                             serialization.NoEncryption()).decode()
-
-
-SA = {"type": "service_account", "client_email": "bbnt-sheets@olala-bbnt.iam.gserviceaccount.com",
-      "private_key": _rsa_pem(), "token_uri": "https://oauth2.googleapis.com/token"}
 
 
 def prod_env(**over: str) -> dict[str, str]:
@@ -42,7 +29,6 @@ def prod_env(**over: str) -> dict[str, str]:
         "GOOGLE_OAUTH_CLIENT_ID": CLIENT_ID,
         "ALLOWED_EMAIL_DOMAINS": "hannaholala.com",
         "CORS_ALLOWED_ORIGINS": f"{FRONTEND}/, https://bbnt-portal.vercel.app",
-        "GOOGLE_SERVICE_ACCOUNT_JSON": base64.b64encode(json.dumps(SA).encode()).decode(),
     }
     env.update(over)
     return {k: v for k, v in env.items() if v is not None}
@@ -53,9 +39,7 @@ class TestSettings:
     def test_valid_production(self):
         s = Settings.from_env(prod_env())
         assert s.is_production and s.master_sheet_url == MASTER_URL and s.master_cache_seconds == 60
-        assert s.service_account_email == SA["client_email"]
         assert s.cors_allowed_origins == (FRONTEND, "https://bbnt-portal.vercel.app")   # bỏ '/' cuối
-        assert s.google_service_account and s.google_service_account["client_email"] == SA["client_email"]
 
     def test_secrets_not_in_repr(self):
         r = repr(Settings.from_env(prod_env()))
@@ -72,7 +56,6 @@ class TestSettings:
         ({"CORS_ALLOWED_ORIGINS": "*"}, "CORS_ALLOWED_ORIGINS"),
         ({"CORS_ALLOWED_ORIGINS": "http://bbnt.hannaholala.com"}, "CORS_ALLOWED_ORIGINS"),
         ({"DEV_AUTH_HEADER": "true"}, "DEV_AUTH_HEADER"),
-        ({"GOOGLE_SERVICE_ACCOUNT_JSON": ""}, "GOOGLE_SERVICE_ACCOUNT_JSON"),
         ({"APP_TIMEZONE": "UTC"}, "APP_TIMEZONE"),
     ])
     def test_production_rejects_bad_config(self, over, problem):
@@ -85,16 +68,14 @@ class TestSettings:
         with pytest.raises(ConfigError, match="MASTER_SHEET_URL"):
             Settings.from_env({})
 
-    def test_service_account_raw_json_or_base64(self):
-        assert parse_service_account(json.dumps(SA))["client_email"] == SA["client_email"]
-        assert parse_service_account(base64.b64encode(json.dumps(SA).encode()).decode())["type"] == "service_account"
-        with pytest.raises(ConfigError):
-            parse_service_account("not-json")
-        with pytest.raises(ConfigError, match="thiếu"):
-            parse_service_account(json.dumps({"type": "authorized_user"}))
-        broken = dict(SA, private_key="-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n")
-        with pytest.raises(ConfigError, match="private_key"):
-            parse_service_account(json.dumps(broken))
+    def test_service_account_variables_are_ignored(self):
+        """Không còn service account: biến cũ còn sót trên Render không ảnh hưởng gì."""
+        s = Settings.from_env(prod_env(GOOGLE_SERVICE_ACCOUNT_JSON="anything"))
+        assert not hasattr(s, "google_service_account")
+
+    def test_client_id_format(self):
+        with pytest.raises(ConfigError, match="apps.googleusercontent.com"):
+            Settings.from_env(prod_env(GOOGLE_OAUTH_CLIENT_ID="GOCSPX-secret-pasted-by-mistake"))
 
 
 # =========================================================================== Google ID token
@@ -197,12 +178,23 @@ def prod_client(keypair):
     app = create_app(settings)
 
     class EmptyRepo:
-        def get(self, refresh: bool = False) -> Any:
+        has_default_source = False
+
+        def peek(self) -> Any:
+            return None
+
+        def get(self, refresh: bool = False, source: Any = None) -> Any:
             from app.master.loader import load_master
             return load_master(lambda _: None)
 
     app.dependency_overrides[deps.get_token_verifier] = lambda: verifier(keypair)
     app.dependency_overrides[deps.get_master_repo] = lambda: EmptyRepo()
+
+    class TrustingVerifier:
+        def verify(self, token: str, email: str) -> None:
+            assert token == "tok"
+
+    app.dependency_overrides[deps.get_access_token_verifier] = lambda: TrustingVerifier()
     with TestClient(app) as c:
         yield c
 
@@ -247,5 +239,6 @@ def test_auth_required_and_dev_header_ignored_in_production(prod_client, keypair
     r = prod_client.get(url, headers={"Authorization": f"Bearer {bad}"})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "DOMAIN_NOT_ALLOWED"
     r = prod_client.get(url, headers={"Authorization": f"Bearer {sign(keypair)}"})
-    assert r.status_code == 200 and r.json()["ok"] is False             # đã qua xác thực; master rỗng -> lỗi tab
-    assert r.json()["service_account_email"] == SA["client_email"]
+    assert r.status_code == 401 and r.json()["code"] == "GOOGLE_TOKEN_MISSING"   # qua ID token, thiếu access token
+    r = prod_client.get(url, headers={"Authorization": f"Bearer {sign(keypair)}", "X-Google-Access-Token": "tok"})
+    assert r.status_code == 200 and r.json()["ok"] is False             # master rỗng -> lỗi tab
