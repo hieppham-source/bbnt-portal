@@ -1,0 +1,4 @@
+# Netlify: Base directory = frontend. Chỉ build lại khi thư mục frontend/ thay đổi (tiết kiệm credits).
+[build]
+  command = "npm run build"
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- ."

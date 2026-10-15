@@ -1,0 +1,40 @@
+# Render Blueprint — đặt file này ở GỐC repo: bbnt-portal/render.yaml
+# Render > New > Blueprint > chọn repo. Các biến "sync: false" được hỏi 1 lần khi tạo.
+# Không có database / storage: dữ liệu duy nhất là Google Sheet master (MASTER_SHEET_URL).
+services:
+  - type: web
+    name: bbnt-api
+    runtime: docker
+    plan: free                    # 0.1 CPU, 512 MB RAM, 750 giờ/tháng cho cả workspace
+    region: singapore             # không đổi được sau khi tạo
+    rootDir: backend
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass # chỉ deploy khi GitHub Actions backend-ci xanh
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: Asia/Ho_Chi_Minh
+      - key: TZ
+        value: Asia/Ho_Chi_Minh
+      - key: ALLOWED_EMAIL_DOMAINS
+        value: hannaholala.com
+      - key: DEV_AUTH_HEADER
+        value: "false"
+      - key: MASTER_CACHE_SECONDS
+        value: "60"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: MASTER_SHEET_URL         # link Google Sheet master (share Người xem cho service account)
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS     # vd https://bbnt.hannaholala.com
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON   # base64 1 dòng của file key JSON
+        sync: false
