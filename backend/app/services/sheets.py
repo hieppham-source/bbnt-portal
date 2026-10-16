@@ -86,6 +86,10 @@ class GoogleSheetsReader:
         resp = self._session.get(url, params=params, timeout=self._timeout)
         self._check(resp)
         if resp.status_code == 400:
+            body = resp.text if isinstance(getattr(resp, "text", None), str) else ""
+            if "not supported for this document" in body:
+                raise SheetAccessError("Link này là file Excel (.xlsx) trên Drive, không phải Google Sheet — mở file "
+                                       "› Tệp › Lưu dưới dạng Google Trang tính, rồi dán link của bản mới")
             raise SheetAccessError("Không đọc được tab trong sheet — kiểm tra tên tab (mapping) hoặc gid trong link")
         if resp.status_code >= 400:
             raise SheetAccessError(f"Google Sheets API lỗi {resp.status_code}")

@@ -169,6 +169,9 @@ def _filter_brands(parsed: ParseResult, mapping: OrderMapping, scope: Scope) -> 
     (so khớp với Mã brand hoặc Tên brand, không phân biệt hoa thường/dấu)."""
     if not any(f.target is TargetField.BRAND_NAME for f in mapping.fields):
         return list(parsed.lines), 0
+    if not any(ln.brand_name for ln in parsed.lines):
+        # cột brand (tuỳ chọn) không có trong file / trống hết -> coi là file của 1 brand, không lọc
+        return list(parsed.lines), 0
     allowed = {normalize_text(x) for b in scope.brands for x in (b.code, b.name)}
     keep = [ln for ln in parsed.lines if normalize_text(ln.brand_name) in allowed]
     return keep, len(parsed.lines) - len(keep)

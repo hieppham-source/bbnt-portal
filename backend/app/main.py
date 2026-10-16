@@ -54,6 +54,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(bbnt_router)
     app.include_router(master_router)
 
+    @app.get("/", include_in_schema=False)
+    def root() -> dict[str, str]:
+        """Mở địa chỉ backend trên trình duyệt -> biết ngay app đang chạy (thay vì {"detail":"Not Found"})."""
+        return {"service": "bbnt-api", "status": "ok", "health": "/healthz", "ready": "/readyz"}
+
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict[str, str]:
         """Liveness — UptimeRobot ping endpoint này để Render Free không ngủ."""

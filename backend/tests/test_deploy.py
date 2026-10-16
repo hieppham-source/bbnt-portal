@@ -201,6 +201,7 @@ def prod_client(keypair):
 
 def test_healthz_and_no_public_docs(prod_client):
     assert prod_client.get("/healthz").json() == {"status": "ok"}
+    assert prod_client.get("/").json()["service"] == "bbnt-api"
     assert prod_client.get("/docs").status_code == 404
     assert prod_client.get("/openapi.json").status_code == 404
 

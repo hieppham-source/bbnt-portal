@@ -238,3 +238,15 @@ def test_app_uses_its_own_settings_without_overrides(monkeypatch):
                                                     "Access-Control-Request-Method": "GET",
                                                     "Access-Control-Request-Headers": "x-user-email"})
     assert pre.status_code == 200                       # local dev: frontend gửi X-User-Email được
+
+
+def test_order_without_brand_column_keeps_all_lines(env):
+    """BRAND_NAME tuỳ chọn: file order không có cột Brand -> không lọc brand (trước đây loại hết dòng)."""
+    header = ["Ngày đặt hàng", "Mã đơn hàng", "Trạng thái", "SKU", "Tên sản phẩm", "Số lượng",
+              "Doanh thu sau voucher"]
+    env.sheets.sheets[sheet_id(ORDER_URL_FB)] = [["BÁO CÁO"], header,
+                                                 ["03/05/2026", "FB001", "Đã giao", "ORG-01", "Serum", 2, 1_000_000]]
+    r = env.post("/api/v1/bbnt/preview", ORGANICA)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["other_brand_line_count"] == 0 and Decimal(str(b["figures"]["nmv"])) == 1_000_000

@@ -202,3 +202,12 @@ def test_api_checks_access_token_owner(client):
     r = client.post("/api/v1/bbnt/preview", json=BODY, headers={**USER, "X-Google-Access-Token": "good"})
     assert r.status_code == 401 and r.json()["code"] == "GOOGLE_TOKEN_WRONG_USER"
     assert FakeUserReader.tokens == []
+
+
+def test_xlsx_on_drive_gives_clear_message():
+    reader = sheets_mod.GoogleSheetsReader("t")
+    resp = _Resp(400)
+    resp.text = '{"error":{"code":400,"message":"This operation is not supported for this document"}}'
+    reader._session.get = lambda *a, **k: resp
+    with pytest.raises(SheetAccessError, match="Excel"):
+        reader.read(parse_sheet_url(ORDER_URL_FB))
