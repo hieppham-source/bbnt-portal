@@ -122,6 +122,8 @@ class ContractOut(BaseModel):
     valid_to: date | None
     signed_on: date
     signed_on_source: str        # "Ngày ký" | "Hiệu lực từ" (HOP_DONG chưa có cột Ngày ký)
+    appendix_no: str | None = None
+    appendix_signed_on: date | None = None
     party_a_name: str
     master_row: int
 
