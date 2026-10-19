@@ -92,6 +92,7 @@ def to_preview(r: BbntResult) -> PreviewResponse:
                              commission_rate=k.commission_rate, valid_from=k.valid_from, valid_to=k.valid_to,
                              signed_on=k.signed_on or k.valid_from,
                              signed_on_source="Ngày ký" if k.signed_on else "Hiệu lực từ",
+                             appendix_no=k.appendix_no, appendix_signed_on=k.appendix_signed_on,
                              party_a_name=k.party_a.legal_name, master_row=k.row),
         figures=FiguresOut(
             gmv_estimated=r.gmv_vnd, nmv=r.nmv_vnd, cancellation_rate=r.nmv.cancellation_rate,
