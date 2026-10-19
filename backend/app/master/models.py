@@ -64,6 +64,12 @@ class Contract:
     #: NQ 204/2025/QH15 không giống nhau giữa các brand Sassy). None -> dùng thuế suất của pháp nhân như cũ.
     #: Không đổi tax_mode (Cộng VAT/Khấu trừ) của pháp nhân — chỉ đổi tỷ lệ %.
     tax_rate_override: Decimal | None = None
+    #: Cột "Số phụ lục HĐ" / "Ngày ký phụ lục" (tuỳ chọn, đi cùng cặp) — hợp đồng có phụ lục (PLHD) bổ sung/
+    #: điều chỉnh hợp đồng gốc. Khi có đủ cả 2, BBNT ghi thêm "và Phụ lục hợp đồng số ... ký ngày ..." sau câu
+    #: "Căn cứ hợp đồng ... số {contract_no} ký ngày {signed_on}" (xem contract_signed_text trong
+    #: app.services.bbnt_document). Thiếu 1 trong 2 -> coi như không có phụ lục (bỏ qua, không lỗi).
+    appendix_no: str | None = None
+    appendix_signed_on: date | None = None
 
     def covers(self, start: date, end: date) -> bool:
         return self.valid_from <= start and (self.valid_to is None or end <= self.valid_to)
