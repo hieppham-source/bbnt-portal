@@ -167,8 +167,9 @@ class BbntGenerator:
         program = program_name(scope.display, inp.campaign_name, number)
         values, item_rows, brand_blocks = build_render_context(
             number=number, program=program, contract_no=contract.contract_no,
-            contract_signed_on=contract.signed_on or contract.valid_from, party_a=contract.party_a,
-            gmv_estimated=gmv_vnd, nmv=nmv_vnd, cancellation_rate=nmv.cancellation_rate,
+            contract_signed_on=contract.signed_on or contract.valid_from,
+            appendix_no=contract.appendix_no, appendix_signed_on=contract.appendix_signed_on,
+            party_a=contract.party_a, gmv_estimated=gmv_vnd, nmv=nmv_vnd, cancellation_rate=nmv.cancellation_rate,
             commission=commission, items=nmv.items, brand_breakdown=brand_breakdown)
         result = BbntResult(number, entity, scope, contract, mapping, tax, parsed, lines, other, nmv,
                             gmv_vnd, nmv_vnd, commission, program, choice, book.kind, values,
