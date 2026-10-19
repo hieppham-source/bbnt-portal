@@ -58,6 +58,12 @@ class Contract:
     party_a: PartyA
     active: bool
     row: int
+    signed_on: date | None = None   # cột "Ngày ký" (tuỳ chọn); trống -> BBNT dùng "Hiệu lực từ"
+    #: Cột "Thuế suất riêng" (tuỳ chọn) — VAT/khấu trừ thuế áp dụng RIÊNG cho brand/hợp đồng này, ghi đè
+    #: thuế suất mặc định của pháp nhân (tab PHAP_NHAN) khi khác nhau theo brand (vd mức giảm trừ theo
+    #: NQ 204/2025/QH15 không giống nhau giữa các brand Sassy). None -> dùng thuế suất của pháp nhân như cũ.
+    #: Không đổi tax_mode (Cộng VAT/Khấu trừ) của pháp nhân — chỉ đổi tỷ lệ %.
+    tax_rate_override: Decimal | None = None
 
     def covers(self, start: date, end: date) -> bool:
         return self.valid_from <= start and (self.valid_to is None or end <= self.valid_to)

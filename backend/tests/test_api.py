@@ -105,6 +105,20 @@ def test_preview_group_sassy(env):
     assert Decimal(b["figures"]["total_payable"]) == 2_227_500
 
 
+def test_contract_tax_rate_override_changes_vat(env):
+    """Cột "Thuế suất riêng" (tuỳ chọn, tab HOP_DONG) ghi đè % VAT/khấu trừ CHO RIÊNG brand đó — không được
+    lấy 1 con số thuế cố định dùng chung cho mọi brand cùng pháp nhân (vd NQ 204/2025/QH15)."""
+    h = env.tables["HOP_DONG"]
+    h[1][h[0].index("Thuế suất riêng")] = "5%"                 # dòng hợp đồng ORGANICA (EZS, VAT mặc định 8%)
+    b = env.post("/api/v1/bbnt/preview", ORGANICA, refresh="true").json()
+    assert b["figures"]["tax_rate"] == "0.05"
+    assert "HD" not in b["figures"]["tax_label"] or "riêng theo HĐ" in b["figures"]["tax_label"]
+    assert "01/2026/HĐDV/EZS-ORGANICA" in b["figures"]["tax_label"]
+    assert Decimal(b["figures"]["commission_amount"]) == 630_000           # hoa hồng không đổi
+    assert Decimal(b["figures"]["vat_amount"]) == 31_500                   # 630.000 x 5% (thay vì 8%)
+    assert Decimal(b["figures"]["total_payable"]) == 661_500
+
+
 # =========================================================================== generate
 def test_generate_returns_docx_and_stores_nothing(env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

@@ -191,11 +191,15 @@ def test_legal_dates_untouched(kind):
     out = load(r.render(values_for(r), items(2)).content)
     legal = [m.group(0) for p in src.element.body.iter(W_P)
              for m in filler_mod.LEGAL_DATE_RE.finditer(paragraph_text(p))]
-    assert any("tháng XX năm 20XX" in x for x in legal)          # ngày ký HĐ
+    assert any("tháng XX năm 20XX" in x for x in legal)          # ngày ký HĐ (template gốc)
     assert any(x.startswith("ngày\xa007") for x in legal)        # ngày lập BBNT
     text = all_text(out)
     for x in legal:
-        assert x in text
+        if "tháng XX năm 20XX" in x:      # ngày ký HĐ được điền từ master
+            assert x not in text
+        else:
+            assert x in text
+    assert "<contract_signed>" in text
 
 
 def test_party_b_and_terms_identical_to_source(kind):

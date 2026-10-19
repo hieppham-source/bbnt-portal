@@ -32,13 +32,15 @@ class BbntRequest(BaseModel):
     collected_on_behalf: Decimal = Field(default=Decimal(0), ge=0, max_digits=16, decimal_places=2)
     consulting_fee: Decimal = Field(default=Decimal(0), ge=0, max_digits=16, decimal_places=2)
     strip_comments: bool = False
+    order_tab: str | None = Field(default=None, max_length=200,
+                                  description="Tab trong file order — bỏ trống để tự chọn")
 
     @field_validator("channel", "entity")
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
 
-    @field_validator("group_code", "contract_no", "mapping_code")
+    @field_validator("group_code", "contract_no", "mapping_code", "order_tab")
     @classmethod
     def _blank_none(cls, v: str | None) -> str | None:
         return v or None
@@ -81,7 +83,7 @@ class BbntRequest(BaseModel):
                          campaign_name=self.campaign_name, brand_codes=self.brand_codes, group_code=self.group_code,
                          contract_no=self.contract_no, mapping_code=self.mapping_code,
                          collected_on_behalf=self.collected_on_behalf, consulting_fee=self.consulting_fee,
-                         strip_comments=self.strip_comments)
+                         strip_comments=self.strip_comments, order_tab=self.order_tab)
 
 
 class IssueOut(BaseModel):
@@ -118,6 +120,8 @@ class ContractOut(BaseModel):
     commission_rate: Decimal
     valid_from: date
     valid_to: date | None
+    signed_on: date
+    signed_on_source: str        # "Ngày ký" | "Hiệu lực từ" (HOP_DONG chưa có cột Ngày ký)
     party_a_name: str
     master_row: int
 
@@ -144,6 +148,10 @@ class PreviewResponse(BaseModel):
     items: list[ItemOut]
     order_line_count: int
     other_brand_line_count: int
+    order_tab: str | None = None
+    order_tabs: list[str] = []
+    order_file_kind: str = "google_sheet"
+    order_header_row: int = 1
     warning_count: int
     warnings: list[IssueOut]
 

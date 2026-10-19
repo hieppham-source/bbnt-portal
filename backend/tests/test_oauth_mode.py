@@ -13,7 +13,13 @@ from app.google_token import SHEETS_SCOPE, AccessTokenVerifier
 from app.main import create_app
 from app.services import sheets as sheets_mod
 from app.services.generator import BbntGenerator
-from app.services.sheets import GoogleSheetsReader, SheetAccessError, SheetAuthError, parse_sheet_url
+from app.services.sheets import (
+    GoogleSheetsReader,
+    OrderWorkbook,
+    SheetAccessError,
+    SheetAuthError,
+    parse_sheet_url,
+)
 
 from .conftest import MASTER_XLSX, ORDER_URL_FB, ORGANICA_MAY, sheet_id, vn_clock
 
@@ -50,6 +56,11 @@ class FakeUserReader:
         self._guard()
         assert ref.spreadsheet_id == sheet_id(ORDER_URL_FB)
         return [list(r) for r in ORGANICA_MAY]
+
+    def open(self, ref: Any) -> OrderWorkbook:
+        self._guard()
+        assert ref.spreadsheet_id == sheet_id(ORDER_URL_FB)
+        return OrderWorkbook("google_sheet", ["ORDER"], lambda t: [list(r) for r in ORGANICA_MAY])
 
 
 @pytest.fixture

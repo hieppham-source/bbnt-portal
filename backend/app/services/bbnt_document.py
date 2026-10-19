@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -40,11 +41,17 @@ def signature_name(representative: str) -> str:
     return _HONORIFIC.sub("", representative.strip()).upper()
 
 
+def contract_signed_text(signed_on: date) -> str:
+    """'ký ngày 01 tháng 08 năm 2025' — thay cụm 'ký ngày XX tháng XX năm 20XX' của template."""
+    return f"ký ngày {signed_on:%d} tháng {signed_on:%m} năm {signed_on:%Y}"
+
+
 def build_render_context(
     *,
     number: BbntNumber,
     program: str,
     contract_no: str,
+    contract_signed_on: date,
     party_a: PartyA,
     gmv_estimated: Decimal,
     nmv: Decimal,
@@ -58,6 +65,7 @@ def build_render_context(
         "bbnt_number": str(number),
         "program_name": program,
         "contract_no": contract_no,
+        "contract_signed": contract_signed_text(contract_signed_on),
         "period_label": number.period_label,                 # mm.yy
         "issue_month": number.issue_month.label,             # mm.yy — tháng nghiệp vụ, KHÔNG phải ngày lập pháp lý
         "party_a_name": party_a.legal_name,

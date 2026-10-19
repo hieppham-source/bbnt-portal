@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from app.master.repository import xlsx_source
-from app.services.sheets import SheetAccessError, SheetRef
+from app.services.sheets import OrderWorkbook, SheetAccessError, SheetRef
 
 ROOT = Path(__file__).resolve().parents[1]
 MASTER_XLSX = ROOT / "deploy" / "MASTER_BBNT_TEMPLATE.xlsx"
@@ -55,6 +55,18 @@ class FakeSheets:
             raise SheetAccessError("Tài khoản của bạn không mở được sheet — kiểm tra link và nhờ chủ file "
                                    "share quyền Người xem cho email của bạn")
         return copy.deepcopy(self.sheets[ref.spreadsheet_id])
+
+    def open(self, ref: SheetRef) -> OrderWorkbook:
+        """Giá trị là list -> 1 tab 'ORDER'; dict -> nhiều tab (tên tab -> rows). ``gid`` = vị trí tab."""
+        self.calls.append((ref.spreadsheet_id, None))
+        if ref.spreadsheet_id not in self.sheets:
+            raise SheetAccessError("Tài khoản của bạn không mở được sheet — kiểm tra link và nhờ chủ file "
+                                   "share quyền Người xem cho email của bạn")
+        data = self.sheets[ref.spreadsheet_id]
+        tabs: dict[str, list[list[Any]]] = copy.deepcopy(data if isinstance(data, dict) else {"ORDER": data})
+        names = list(tabs)
+        gid_tab = names[ref.gid] if ref.gid is not None and ref.gid < len(names) else None
+        return OrderWorkbook("google_sheet", names, lambda t: tabs[t], gid_tab=gid_tab)
 
 
 def sheet_id(url: str) -> str:

@@ -12,10 +12,9 @@ Cần làm lại -> dán lại link order. Cần sửa câu chữ -> người l�
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
 
 from app.core.calculation import (
     CommissionResult,
@@ -26,6 +25,7 @@ from app.core.calculation import (
     RowIssue,
     Severity,
     TargetField,
+    TaxMode,
     TaxPolicy,
     calculate_commission,
     compute_nmv,
@@ -34,18 +34,21 @@ from app.core.calculation import (
 )
 from app.core.numbering import BbntNumber, BrandRef, NumberingError, YearMonth, generate_bbnt_number, normalize_months
 from app.docx.filler import LegalTextModifiedError, MissingValueError
+from app.docx.vn_text import format_percent
 from app.errors import fail
 from app.master.index import Scope, find_contract, find_mapping, resolve_scope
 from app.master.models import Contract, Entity, MasterData, OrderMapping
 from app.services.bbnt_document import build_render_context, program_name
+from app.services.order_tabs import TabChoice, choose_order_tab
+from app.services.sheets import OrderWorkbook
 from app.services.templates import TemplateRegistry
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 VND = Decimal(1)
 MAX_ISSUES_IN_ERROR = 200
 
-#: Đọc file order: nhận tên tab của mapping (có thể None) -> ma trận ô.
-OrderReader = Callable[[str | None], Sequence[Sequence[Any]]]
+#: Mở file order (Google Sheet hoặc .xlsx trên Drive) -> danh sách tab + cách đọc.
+OrderOpener = Callable[[], OrderWorkbook]
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,7 @@ class BbntInput:
     collected_on_behalf: Decimal = Decimal(0)
     consulting_fee: Decimal = Decimal(0)
     strip_comments: bool = False
+    order_tab: str | None = None
 
 
 @dataclass
@@ -79,6 +83,8 @@ class BbntResult:
     nmv_vnd: Decimal
     commission: CommissionResult
     program: str
+    order: TabChoice | None = None
+    order_kind: str = "google_sheet"
     values: dict[str, str] = field(default_factory=dict)
     content: bytes | None = None
 
@@ -92,7 +98,7 @@ class BbntGenerator:
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self.templates, self.clock = templates, clock
 
-    def run(self, master: MasterData, inp: BbntInput, read_order: OrderReader, *, render: bool = True) -> BbntResult:
+    def run(self, master: MasterData, inp: BbntInput, open_order: OrderOpener, *, render: bool = True) -> BbntResult:
         channel, entity_code = inp.channel.strip().upper(), inp.entity.strip().upper()
         issued_at = self.clock()
         try:
@@ -112,15 +118,21 @@ class BbntGenerator:
         if tax is None:
             raise fail("TAX_RULE_MISSING", f"Tab PHAP_NHAN chưa có thuế của {entity_code} hiệu lực ngày "
                                            f"{number.issue_date:%d/%m/%Y}")
+        if contract.tax_rate_override is not None:
+            tax = _apply_contract_tax_override(tax, contract)
         mapping = find_mapping(master, channel, inp.mapping_code)
         renderer = self.templates.renderer(entity_code, contract.model, channel) if render else None
 
-        # 2. order
-        rows = read_order(mapping.sheet_name)
+        # 2. order: mở file, chọn tab, parse
+        config = mapping.to_config()
+        book = open_order()
+        choice = choose_order_tab(book, config, mapping_code=mapping.code, scope=scope, campaign=inp.campaign_name,
+                                  months=months, requested=inp.order_tab)
         try:
-            parsed = parse_sheet(rows, mapping.to_config())
+            parsed = parse_sheet(book.read(choice.tab), config)
         except MappingError as exc:
-            raise fail("MAPPING_MISMATCH", f"File order không khớp mapping {mapping.code}: {exc}") from exc
+            raise fail("MAPPING_MISMATCH", f"Tab '{choice.tab}' không khớp mapping {mapping.code}: {exc}",
+                       details={"tabs": choice.candidates}) from exc
         lines, other = _filter_brands(parsed, mapping, scope)
 
         # 3. tính
@@ -134,6 +146,8 @@ class BbntGenerator:
         nmv_vnd = nmv.nmv.quantize(VND, ROUND_HALF_UP)
         if nmv_vnd <= 0:
             hint = f" ({other} dòng thuộc brand khác bị loại)" if other else ""
+            if len(choice.candidates) > 1:
+                hint += f" — đang đọc tab '{choice.tab}', chọn tab khác nếu sai"
             raise fail("NO_DELIVERED_ORDERS", f"Không có đơn 'Đã giao' nào trong kỳ nghiệm thu{hint}",
                        details=issues[:50])
         commission = calculate_commission(nmv_vnd, contract.commission_rate, tax,
@@ -143,11 +157,12 @@ class BbntGenerator:
         # 4-5. số + render
         program = program_name(scope.display, inp.campaign_name, number)
         values, item_rows = build_render_context(
-            number=number, program=program, contract_no=contract.contract_no, party_a=contract.party_a,
+            number=number, program=program, contract_no=contract.contract_no,
+            contract_signed_on=contract.signed_on or contract.valid_from, party_a=contract.party_a,
             gmv_estimated=gmv_vnd, nmv=nmv_vnd, cancellation_rate=nmv.cancellation_rate,
             commission=commission, items=nmv.items)
         result = BbntResult(number, entity, scope, contract, mapping, tax, parsed, lines, other, nmv,
-                            gmv_vnd, nmv_vnd, commission, program, values)
+                            gmv_vnd, nmv_vnd, commission, program, choice, book.kind, values)
         if renderer is not None:
             try:
                 result.content = renderer.render(values, item_rows, strip_comments=inp.strip_comments).content
@@ -162,6 +177,16 @@ class BbntGenerator:
                                         channel=scope.channel, period_months=months, issued_at=issued_at)
         except NumberingError as exc:
             raise fail("INVALID_INPUT", str(exc)) from exc
+
+
+def _apply_contract_tax_override(tax: TaxPolicy, contract: Contract) -> TaxPolicy:
+    """Ghi đè % thuế (không đổi loại thuế) theo ``contract.tax_rate_override`` — xem cột "Thuế suất riêng"
+    trong tab HOP_DONG. Dùng khi VAT/khấu trừ thuế (vd theo NQ 204/2025/QH15) khác nhau theo từng brand/hợp
+    đồng ngay trong cùng 1 pháp nhân; KHÔNG được lấy 1 con số cố định dùng chung cho mọi brand."""
+    assert contract.tax_rate_override is not None
+    kind = "VAT" if tax.mode is TaxMode.VAT_ADD else "Khấu trừ thuế" if tax.mode is TaxMode.TAX_DEDUCT else tax.label
+    label = f"{kind} {format_percent(contract.tax_rate_override)} (riêng theo HĐ {contract.contract_no})"
+    return replace(tax, rate=contract.tax_rate_override, label=label)
 
 
 def _filter_brands(parsed: ParseResult, mapping: OrderMapping, scope: Scope) -> tuple[list[OrderLine], int]:

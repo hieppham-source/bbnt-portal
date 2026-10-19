@@ -18,14 +18,13 @@ import os
 import sys
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 from app.config import DEFAULT_TEMPLATES_DIR, ConfigError, get_settings
 from app.errors import BbntError
 from app.master.models import MasterData
 from app.master.repository import build_master, google_sheet_source, xlsx_source
-from app.services.generator import BbntGenerator, BbntInput, OrderReader
-from app.services.sheets import GoogleSheetsReader, SheetAccessError, parse_sheet_url, xlsx_sheet_names
+from app.services.generator import BbntGenerator, BbntInput, OrderOpener
+from app.services.sheets import GoogleSheetsReader, SheetAccessError, parse_sheet_url, xlsx_workbook
 from app.services.templates import TemplateRegistry
 
 
@@ -96,23 +95,13 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 1
 
 
-def _order_reader(args: argparse.Namespace) -> OrderReader:
+def _order_opener(args: argparse.Namespace) -> OrderOpener:
     if args.order_file:
-        from app.core.calculation import rows_from_xlsx
-
         path = args.order_file
-        names = xlsx_sheet_names(path)
-
-        def read_local(sheet_name: str | None) -> list[list[Any]]:
-            tab = args.order_tab or (sheet_name if sheet_name in names else None)
-            return rows_from_xlsx(path, tab)
-        return read_local
+        return lambda: xlsx_workbook(Path(path).read_bytes())
     ref = parse_sheet_url(args.order_url)
     reader = _google_reader()
-
-    def read_remote(sheet_name: str | None) -> list[list[Any]]:
-        return reader.read(ref, sheet_name=args.order_tab or sheet_name)
-    return read_remote
+    return lambda: reader.open(ref)
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -127,8 +116,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
                         campaign_name=args.campaign, brand_codes=args.brand, group_code=args.group,
                         contract_no=args.contract, mapping_code=args.mapping,
                         collected_on_behalf=Decimal(args.collected_on_behalf),
-                        consulting_fee=Decimal(args.consulting_fee), strip_comments=args.strip_comments)
-        r = BbntGenerator(templates).run(master, inp, _order_reader(args), render=not args.dry_run)
+                        consulting_fee=Decimal(args.consulting_fee), strip_comments=args.strip_comments,
+                        order_tab=args.order_tab)
+        r = BbntGenerator(templates).run(master, inp, _order_opener(args), render=not args.dry_run)
     except BbntError as exc:
         print(f"LỖI {exc.code}: {exc.message}", file=sys.stderr)
         if isinstance(exc.details, list):
@@ -143,6 +133,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     c = r.commission
     print(f"Số BBNT       : {r.number}")
     print(f"Hợp đồng      : {r.contract.contract_no} (HOP_DONG dòng {r.contract.row}) — hoa hồng {c.commission_rate}")
+    if r.order:
+        tabs = ", ".join(r.order.candidates)
+        print(f"Tab order     : {r.order.tab} (header dòng {r.parse.header_row}; tab khớp: {tabs})")
     print(f"GMV ước tính  : {r.gmv_vnd:,}")
     print(f"NMV (Đã giao) : {r.nmv_vnd:,}")
     print(f"Hoa hồng      : {c.revenue:,}  | {r.tax.label}: VAT {c.vat_amount:,} / khấu trừ {c.tax_deduction_amount:,}")
@@ -179,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--mapping")
     g.add_argument("--order-url")
     g.add_argument("--order-file")
-    g.add_argument("--order-tab", help="Tên tab trong file order (ghi đè mapping)")
+    g.add_argument("--order-tab", help="Tên tab trong file order (bỏ trống để tự chọn)")
     g.add_argument("--master-file")
     g.add_argument("--access-token", help="Access token OAuth Google của bạn (đọc Sheet master + file order)")
     g.add_argument("--templates-dir")

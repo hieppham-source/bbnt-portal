@@ -9,7 +9,10 @@ Tab và cột (dòng 1 là tiêu đề; so khớp không phân biệt hoa/thư�
 * **BRAND** — Kênh · Mã brand · Tên brand · Mã group · Tên group · Đang hợp tác
 * **HOP_DONG** — Số hợp đồng · Pháp nhân · Kênh (trống = mọi kênh) · Mã brand | Mã group · Mô hình ·
   % hoa hồng · Hiệu lực từ · Hiệu lực đến · Tên Bên A · MST · Địa chỉ · Điện thoại · Số tài khoản · Ngân hàng ·
-  Người đại diện · Chức vụ · Trạng thái. Đổi % hoa hồng = thêm dòng mới với ngày hiệu lực mới.
+  Người đại diện · Chức vụ · Trạng thái · Thuế suất riêng (tuỳ chọn). Đổi % hoa hồng = thêm dòng mới với ngày
+  hiệu lực mới. "Thuế suất riêng" (tuỳ chọn, vd ``5%``) ghi đè thuế suất mặc định của pháp nhân (tab PHAP_NHAN)
+  CHO RIÊNG brand/hợp đồng này — dùng khi mức VAT/khấu trừ thuế (vd theo NQ 204/2025/QH15) khác nhau giữa các
+  brand cùng pháp nhân; để trống thì dùng thuế suất chung của pháp nhân như cũ.
 * **MAPPING** — Mã mapping · Kênh · Tên tab · Dòng tiêu đề · Dòng dữ liệu đầu · Mặc định · Trường · Tên cột ·
   Cột · Bắt buộc. Mỗi trường 1 dòng; dòng ``STATUS_DELIVERED`` / ``STATUS_RETURNED`` / ``STATUS_CANCELLED``
   ghi các giá trị trạng thái (phân cách dấu phẩy) ở cột "Tên cột".
@@ -77,6 +80,7 @@ COLUMNS: dict[str, dict[str, tuple[str, ...]]] = {
         "rate": ("% hoa hồng", "Hoa hồng"),
         "valid_from": ("Hiệu lực từ",),
         "valid_to": ("Hiệu lực đến",),
+        "signed_on": ("Ngày ký", "Ngày ký HĐ", "Ngày ký hợp đồng"),
         "a_name": ("Tên Bên A", "Bên A"),
         "a_tax_code": ("MST", "MST Bên A", "Mã số thuế"),
         "a_address": ("Địa chỉ",),
@@ -86,6 +90,7 @@ COLUMNS: dict[str, dict[str, tuple[str, ...]]] = {
         "a_representative": ("Người đại diện", "Đại diện"),
         "a_title": ("Chức vụ",),
         "status": ("Trạng thái",),
+        "tax_rate_override": ("Thuế suất riêng", "Thuế suất riêng (ghi đè)", "VAT/Khấu trừ riêng"),
     },
     "mappings": {
         "code": ("Mã mapping",),
@@ -364,7 +369,12 @@ def _parse_contracts(table: Sequence[Sequence[Any]], tab: str, issues: list[Mast
                 raise _RowError("Thiếu Hiệu lực từ")
             if vt and vt < vf:
                 raise _RowError("Hiệu lực đến trước Hiệu lực từ")
+            signed = _date(r.get("signed_on"), "Ngày ký")
             active = _bool(r.get("status"), True)
+            raw_override = r.get("tax_rate_override")
+            tax_rate_override = (_percent(raw_override, "Thuế suất riêng") if not _blank(raw_override) else None)
+            if tax_rate_override is not None and tax_rate_override >= 1:
+                raise _RowError("Thuế suất riêng phải nhỏ hơn 100%")
             party = PartyA(
                 legal_name=_text(r.get("a_name")) or "",
                 address=_text(r.get("a_address")) or "",
@@ -381,7 +391,8 @@ def _parse_contracts(table: Sequence[Sequence[Any]], tab: str, issues: list[Mast
             issues.append(MasterIssue(tab, rn, str(exc)))
             continue
         issues.extend(MasterIssue(tab, rn, w, "WARNING") for w in warns)
-        c = Contract(no, entity, channel, brand, group, model, rate, vf, vt, party, active, rn)
+        c = Contract(no, entity, channel, brand, group, model, rate, vf, vt, party, active, rn, signed,
+                     tax_rate_override)
         clash = next((o for o in out if o.active and c.active and o.entity_code == c.entity_code
                       and o.channel == c.channel and o.brand_code == c.brand_code and o.group_code == c.group_code
                       and o.model == c.model and o.overlaps(c.valid_from, c.valid_to or date.max)), None)
@@ -432,8 +443,12 @@ def _parse_mappings(table: Sequence[Sequence[Any]], tab: str, issues: list[Maste
                 except (_RowError, MappingError) as exc:
                     issues.append(MasterIssue(tab, rn, str(exc)))
             status_aliases = None
-            if aliases:
-                status_aliases = {**DEFAULT_STATUS_ALIASES, **aliases}
+            if aliases:     # cộng thêm vào trạng thái mặc định; giá trị khai ở MAPPING thắng nếu trùng
+                claimed = {normalize_text(v) for vs in aliases.values() for v in vs}
+                status_aliases = {
+                    st: frozenset(aliases.get(st, frozenset()))
+                    | frozenset(v for v in DEFAULT_STATUS_ALIASES.get(st, ()) if normalize_text(v) not in claimed)
+                    for st in {*DEFAULT_STATUS_ALIASES, *aliases}}
             mapping = OrderMapping(code, channel, _text(pick("tab")), header_row, data_row, tuple(fields),
                                    status_aliases, _bool(pick("default"), False), first_rn)
             mapping.to_config()   # kiểm tra đủ trường bắt buộc

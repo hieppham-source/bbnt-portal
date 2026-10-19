@@ -119,6 +119,22 @@ class TestLoader:
         assert [rates[f"HD{i}"] for i in range(5)] == [Decimal("0.18")] * 5
         assert rates["HD5"] == Decimal("0.125")
 
+    def test_contract_tax_rate_override(self, master_tables):
+        """Cột "Thuế suất riêng" (tuỳ chọn) ghi đè % thuế CHO RIÊNG 1 brand/hợp đồng — vd mức giảm trừ
+        theo NQ 204/2025/QH15 không giống nhau giữa các brand Sassy, không được dùng chung 1 con số."""
+        t = master_tables
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-OVERRIDE", "Thuế suất riêng": "5%"}))
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-BAD", "Thuế suất riêng": "abc"}))
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-100", "Thuế suất riêng": "100%"}))
+        m = build_master(t)
+        by_no = {c.contract_no: c for c in m.contracts}
+        assert by_no["01/2026/HĐDV/EZS-ORGANICA"].tax_rate_override is None     # cột trống -> không đổi
+        assert by_no["HD-OVERRIDE"].tax_rate_override == Decimal("0.05")
+        msgs = [msg for _, _, msg in messages(m, "HOP_DONG")]
+        assert any("Thuế suất riêng" in msg and "không hợp lệ" in msg for msg in msgs)
+        assert any("Thuế suất riêng" in msg and "nhỏ hơn 100%" in msg for msg in msgs)
+        assert "HD-BAD" not in by_no and "HD-100" not in by_no                  # 2 dòng lỗi bị bỏ qua
+
     def test_tax_periods_must_not_overlap(self, master_tables):
         add_row(master_tables, "PHAP_NHAN", **{"Mã pháp nhân": "EZS", "Mã số BBNT": "EZ", "Loại thuế": "Cộng VAT",
                                                "Thuế suất": "10%", "Hiệu lực từ": "01/12/2026"})

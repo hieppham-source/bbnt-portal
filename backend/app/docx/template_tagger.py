@@ -8,8 +8,9 @@ Chạy 1 lần cho mỗi template gốc, kết quả upload thành ``template_ve
     python -m app.docx.template_tagger sassy "templates/source/TEMPLATE BBNT HKD SASSY X BRAND - FB NON-OP.docx" \\
         templates/bbnt_sassy_fb_nonop.v2.docx
 
-Tagger chỉ đổi đúng các placeholder; KHÔNG đụng ngày tháng pháp lý ("TPHCM, ngày .. tháng .. năm ..",
-"ký ngày XX tháng XX năm 20XX"), thông tin Bên B, điều khoản, chữ ký Bên B. Thao tác cấu trúc duy nhất:
+Tagger chỉ đổi đúng các placeholder; KHÔNG đụng ngày lập BBNT ("TPHCM, ngày .. tháng .. năm .."), thông tin
+Bên B, điều khoản, chữ ký Bên B. Ngày ký hợp đồng ("ký ngày XX tháng XX năm 20XX") được thay cả cụm bằng
+``{{contract_signed}}`` (lấy từ cột Ngày ký / Hiệu lực từ của tab HOP_DONG). Thao tác cấu trúc duy nhất:
 gom 15 (EZS) / 2 (SASSY) dòng trống của bảng sản phẩm thành 1 dòng mẫu ``{{item.*}}``.
 Sau khi gắn token, file được nạp lại bằng :class:`BbntDocxRenderer` để kiểm tra đủ token kỳ vọng.
 """
@@ -147,6 +148,7 @@ def tag_ezs(d: _Doc) -> None:
     d.replace(d.para("Số: XX.202X/BBNT-"), " XX.202X/BBNT-BRAND-EZS-FB-XX.XX", " {{bbnt_number}}")
     d.replace(d.para("(Chương trình BRAND XXX"), "BRAND XXX", "{{program_name}}")
     d.replace(d.para("Căn cứ vào Hợp đồng số"), "XXX  ", "{{contract_no}} ")
+    contract_signed_date(d.para("Căn cứ vào Hợp đồng số"))
     _common_party_a(d, {
         "Địa chỉ": "{{party_a_address}}", "Điện thoại": "{{party_a_phone}}", "Mã số thuế": "{{party_a_tax_code}}",
         "Tài khoản": "{{party_a_bank_account}}", "Ngân hàng": "{{party_a_bank_name}}",
@@ -177,6 +179,7 @@ def tag_sassy(d: _Doc) -> None:
     d.replace(d.para("Số: XXXXX/"), " XXXXX/BRAND-SASSY-FB-XXXXX", " {{bbnt_number}}")
     d.replace(d.para("(Chương trình BRAND XXX"), "BRAND XXX", "{{program_name}}")
     d.replace(d.para("Căn cứ vào Hợp đồng dịch vụ số"), "XXXX ", "{{contract_no}} ")
+    contract_signed_date(d.para("Căn cứ vào Hợp đồng dịch vụ số"))
     _common_party_a(d, {
         "Địa chỉ": "{{party_a_address}}", "Số điện thoại": "{{party_a_phone}}", "Mã số thuế": "{{party_a_tax_code}}",
         "Người đại diện": "{{party_a_representative}}", "Chức vụ": "{{party_a_representative_title}}",
@@ -201,6 +204,17 @@ def tag_sassy(d: _Doc) -> None:
     d.replace(pay, "…………", "{{total_payable}} ")
     d.replace_dots(pay, "{{total_payable_words}}")
     _signature(d, title=None)
+
+
+_CONTRACT_DATE_RE = re.compile(r"ký\s+ngày\s+XX\s+tháng\s+XX\s+năm\s+20XX", re.IGNORECASE)
+
+
+def contract_signed_date(p: etree._Element) -> None:
+    """'ký ngày XX tháng XX năm 20XX' -> '{{contract_signed}}' (cả cụm, để không còn mẫu ngày pháp lý)."""
+    m = _CONTRACT_DATE_RE.search(paragraph_text(p))
+    if not m:
+        raise TaggingError(f"Không thấy 'ký ngày XX tháng XX năm 20XX' trong {paragraph_text(p)!r}")
+    replace_span(p, m.start(), m.end(), "{{contract_signed}}")
 
 
 def _after(anchor: etree._Element, p: etree._Element) -> bool:
@@ -248,7 +262,7 @@ TAGGERS: dict[str, Callable[[_Doc], None]] = {"ezs": tag_ezs, "sassy": tag_sassy
 
 EXPECTED_ITEM_FIELDS = frozenset({"name", "quantity", "revenue"})
 EXPECTED_COMMON = frozenset({
-    "bbnt_number", "program_name", "contract_no", "party_a_name", "party_a_address", "party_a_phone",
+    "bbnt_number", "program_name", "contract_no", "contract_signed", "party_a_name", "party_a_address", "party_a_phone",
     "party_a_tax_code", "party_a_bank_account", "party_a_representative", "party_a_representative_title",
     "party_a_representative_upper", "total_quantity", "nmv", "nmv_words", "gmv_estimated", "cancellation_rate_pct",
     "commission_rate_pct", "commission_amount", "total_payable", "total_payable_words",

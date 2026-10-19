@@ -122,9 +122,9 @@ class OrderStatus(str, enum.Enum):
 
 #: Alias mặc định. Có thể override per-mapping qua ``reconciliation_mappings.options.status_aliases``.
 DEFAULT_STATUS_ALIASES: Mapping[OrderStatus, frozenset[str]] = {
-    OrderStatus.DELIVERED: frozenset({"Đã giao"}),
-    OrderStatus.RETURNED: frozenset({"Hoàn hàng", "Đã hoàn hàng", "Trả hàng", "Hoàn trả"}),
-    OrderStatus.CANCELLED: frozenset({"Hủy đơn", "Đã hủy", "Hủy", "Hủy đơn hàng"}),
+    OrderStatus.DELIVERED: frozenset({"Đã giao", "Đã giao hàng", "Giao thành công", "Giao hàng thành công"}),
+    OrderStatus.RETURNED: frozenset({"Hoàn hàng", "Đã hoàn hàng", "Trả hàng", "Hoàn trả", "Đã hoàn"}),
+    OrderStatus.CANCELLED: frozenset({"Hủy đơn", "Đã hủy", "Hủy", "Hủy đơn hàng", "Yêu cầu hủy", "Khách hủy"}),
 }
 
 
@@ -379,24 +379,79 @@ def column_index(letter: str) -> int:
     return idx - 1
 
 
-def resolve_columns(header: Sequence[Any], config: MappingConfig) -> dict[TargetField, int]:
+#: Tên cột hay gặp trong file order của các brand — dùng SAU tên cột khai trong MAPPING (chỉ cho field có trong
+#: mapping). Brand đặt tên lệch chuẩn vẫn đọc được mà không phải sửa Sheet master mỗi lần.
+DEFAULT_HEADER_ALIASES: dict[TargetField, tuple[str, ...]] = {
+    TargetField.ORDER_DATE: ("Ngày đặt hàng", "Ngày đặt", "Ngày tạo đơn", "Ngày đơn hàng", "Order date",
+                             "Created time"),
+    TargetField.ORDER_CODE: ("Mã đơn hàng", "Mã đơn", "Order ID", "Order code", "Order number"),
+    TargetField.ORDER_STATUS: ("Trạng thái", "Trạng thái đơn hàng", "Trạng thái đơn", "Tình trạng lên đơn",
+                               "Tình trạng đơn hàng", "Tình trạng đơn", "Tình trạng", "ORDER_STATUS",
+                               "Order status", "Status"),
+    TargetField.BRAND_NAME: ("Hãng", "Brand", "Thương hiệu", "Nhãn hàng"),
+    TargetField.SKU: ("Mã sản phẩm", "SKU", "Mã SP", "Mã hàng"),
+    TargetField.PRODUCT_NAME: ("Tên sản phẩm", "Sản phẩm", "Tên hàng", "Product name"),
+    TargetField.QUANTITY: ("Số lượng", "SL", "Quantity", "Qty"),
+    TargetField.UNIT_PRICE: ("Giá sản phẩm", "Đơn giá", "Giá bán", "Unit price"),
+    TargetField.DISCOUNT: ("Số tiền giảm", "Giảm giá", "Discount"),
+    TargetField.GMV: ("Total GMV", "GMV", "Tổng tiền", "Thành tiền"),
+    TargetField.GMV_AFTER_VOUCHER: ("GMV sau voucher (if any)", "GMV sau voucher", "Doanh thu sau voucher",
+                                    "Doanh thu sau giảm giá", "GMV after voucher"),
+    TargetField.CAMPAIGN_NAME: ("Tên Camp", "Tên campaign", "Campaign", "Chiến dịch"),
+    TargetField.PAYMENT_METHOD: ("Phương thức thanh toán", "Payment method"),
+    TargetField.NOTE: ("Ghi chú", "Note"),
+}
+
+_ALIAS_SPLIT = re.compile(r"\s*(?:\||\n)\s*")
+_HEADER_NOISE = re.compile(r"[*:]+")
+
+
+def header_aliases(header: str | None) -> list[str]:
+    """'Trạng thái | Tình trạng lên đơn' -> ['Trạng thái', 'Tình trạng lên đơn'] (ngăn bằng | hoặc xuống dòng)."""
+    return [a for a in _ALIAS_SPLIT.split(header or "") if a.strip()]
+
+
+def _norm_header(value: Any) -> str:
+    return " ".join(_HEADER_NOISE.sub(" ", normalize_text(value)).split())
+
+
+def _find_header(names: Sequence[str], header_norm: Sequence[str]) -> int | None:
+    """Tìm cột theo danh sách tên (ưu tiên theo thứ tự): khớp nguyên văn trước, sau đó 'tên cột chứa alias'
+    nếu chỉ đúng 1 cột chứa (vd 'BRAND INPUT Tình trạng lên đơn' chứa 'Tình trạng lên đơn')."""
+    wanted = [n for n in (_norm_header(x) for x in names) if n]
+    for w in wanted:
+        if w in header_norm:
+            return header_norm.index(w)
+    for w in wanted:
+        if len(w) < 4:
+            continue
+        hits = [i for i, h in enumerate(header_norm) if h and re.search(rf"(?:^|\W){re.escape(w)}(?:\W|$)", h)]
+        if len(hits) == 1:
+            return hits[0]
+    return None
+
+
+def resolve_columns(header: Sequence[Any], config: MappingConfig, *, header_row: int | None = None,
+                    ) -> dict[TargetField, int]:
     """Tìm vị trí cột cho từng field. Header trùng tên -> lấy cột đầu tiên.
+
+    Thứ tự thử: các tên khai ở MAPPING (ngăn bằng ``|``) -> tên phổ biến :data:`DEFAULT_HEADER_ALIASES`
+    -> cột chữ cái (A, B, AA) nếu MAPPING có khai.
 
     Raises:
         MappingError: field ``required``/bắt buộc không tìm thấy.
     """
-    positions: dict[str, int] = {}
-    for i, cell in enumerate(header):
-        positions.setdefault(normalize_text(cell), i)
-
+    header_norm = [_norm_header(c) for c in header]
     hard_required = {TargetField.ORDER_CODE, TargetField.ORDER_STATUS}
     resolved: dict[TargetField, int] = {}
     required_missing: list[str] = []
     for spec in config.fields:
-        idx = positions.get(normalize_text(spec.header)) if spec.header else None
+        idx = _find_header(header_aliases(spec.header), header_norm) if spec.header else None
+        if idx is None:
+            idx = _find_header(DEFAULT_HEADER_ALIASES.get(spec.target, ()), header_norm)
         if idx is None and spec.column:
             idx = column_index(spec.column)
-        if idx is not None:
+        if idx is not None and idx not in resolved.values():
             resolved[spec.target] = idx
         elif spec.required or spec.target in hard_required:
             required_missing.append(f"{spec.target.value} ('{spec.header or spec.column}')")
@@ -405,8 +460,30 @@ def resolve_columns(header: Sequence[Any], config: MappingConfig) -> dict[Target
                  or {TargetField.QUANTITY, TargetField.UNIT_PRICE} <= resolved.keys())
     if required_missing or not amount_ok:
         detail = ", ".join(required_missing) or "cột số tiền (GMV / GMV sau voucher / SL + đơn giá)"
-        raise MappingError(f"Không tìm thấy cột trong header dòng {config.header_row}: {detail}")
+        raise MappingError(f"Không tìm thấy cột trong header dòng {header_row or config.header_row}: {detail}")
     return resolved
+
+
+#: Số dòng đầu file được dò tìm header khi dòng header khai trong MAPPING không khớp.
+HEADER_SCAN_ROWS = 15
+
+
+def locate_header(rows: Sequence[Sequence[Any]], config: MappingConfig) -> tuple[int, dict[TargetField, int]]:
+    """Trả về ``(dòng header 1-based, vị trí cột)``. Thử dòng khai trong MAPPING trước, sau đó dò
+    ``HEADER_SCAN_ROWS`` dòng đầu (file brand hay chèn thêm dòng tổng / tiêu đề phía trên header)."""
+    if len(rows) < config.header_row:
+        raise MappingError(f"File chỉ có {len(rows)} dòng, không tới header_row={config.header_row}")
+    try:
+        return config.header_row, resolve_columns(rows[config.header_row - 1], config)
+    except MappingError as first:
+        for i in range(min(len(rows), HEADER_SCAN_ROWS)):
+            if i == config.header_row - 1:
+                continue
+            try:
+                return i + 1, resolve_columns(rows[i], config, header_row=i + 1)
+            except MappingError:
+                continue
+        raise first
 
 
 # =============================================================================
@@ -431,6 +508,7 @@ class ParseResult:
     lines: tuple[OrderLine, ...]
     issues: tuple[RowIssue, ...]
     rows_read: int
+    header_row: int = 1
 
 
 def _cell(row: Sequence[Any], idx: int | None) -> Any:
@@ -454,19 +532,21 @@ def parse_sheet(rows: Sequence[Sequence[Any]], config: MappingConfig) -> ParseRe
     Số tiền 1 dòng = ``GMV_AFTER_VOUCHER`` nếu có giá trị, ngược lại ``GMV``, ngược lại
     ``QUANTITY x UNIT_PRICE - DISCOUNT``.
     """
-    if len(rows) < config.header_row:
-        raise MappingError(f"File chỉ có {len(rows)} dòng, không tới header_row={config.header_row}")
-    cols = resolve_columns(rows[config.header_row - 1], config)
+    header_row, cols = locate_header(rows, config)
+    data_start_row = header_row + (config.data_start_row - config.header_row)
     classifier = StatusClassifier(config.status_aliases)
     F = TargetField
+    identity = [cols[t] for t in (F.ORDER_CODE, F.ORDER_DATE, F.SKU, F.PRODUCT_NAME) if t in cols]
 
     lines: list[OrderLine] = []
     issues: list[RowIssue] = []
     rows_read = 0
-    for offset, row in enumerate(rows[config.data_start_row - 1:]):
-        rn = config.data_start_row + offset
+    for offset, row in enumerate(rows[data_start_row - 1:]):
+        rn = data_start_row + offset
         if all(_blank(c) for c in row):
             continue
+        if all(_blank(_cell(row, i)) for i in identity):
+            continue    # dòng kẻ sẵn công thức (vd GMV = 0) nhưng chưa có đơn -> coi như dòng trống
         rows_read += 1
         order_code = _cell(row, cols.get(F.ORDER_CODE))
         order_code = str(order_code) if not _blank(order_code) else None
@@ -499,7 +579,7 @@ def parse_sheet(rows: Sequence[Sequence[Any]], config: MappingConfig) -> ParseRe
             brand_name=_str_or_none(_cell(row, cols.get(F.BRAND_NAME))),
             order_date=order_date,
         ))
-    return ParseResult(tuple(lines), tuple(issues), rows_read)
+    return ParseResult(tuple(lines), tuple(issues), rows_read, header_row)
 
 
 def _str_or_none(v: Any) -> str | None:
