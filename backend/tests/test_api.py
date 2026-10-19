@@ -119,6 +119,28 @@ def test_contract_tax_rate_override_changes_vat(env):
     assert Decimal(b["figures"]["total_payable"]) == 661_500
 
 
+def test_contract_appendix_renders_plhd_clause(env):
+    """Hợp đồng có "Số phụ lục HĐ" + "Ngày ký phụ lục" (PLHD, cả 2 cột tuỳ chọn, tab HOP_DONG) -> câu "Căn cứ..."
+    trong .docx in thêm "và Phụ lục hợp đồng số ... ký ngày ..." NGAY SAU ngày ký hợp đồng GỐC — không được nhét
+    số phụ lục trước số hợp đồng gốc (lỗi người dùng báo trước đây: "...PLHD .../PLHD/... (HĐ gốc ...) ký ngày
+    ..." bị ngược)."""
+    h = env.tables["HOP_DONG"]
+    h[0] = [*h[0], "Số phụ lục HĐ", "Ngày ký phụ lục"]
+    h[1] = [*h[1], "PLHD-01/ORGANICA", "31/07/2026"]            # dòng hợp đồng ORGANICA (EZS) — Ngày ký trống
+    r = env.post("/api/v1/bbnt/preview", ORGANICA, refresh="true")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["contract"]["appendix_no"] == "PLHD-01/ORGANICA"
+    assert b["contract"]["appendix_signed_on"] == "2026-07-31"
+
+    r2 = env.post("/api/v1/bbnt/generate", ORGANICA, refresh="true")
+    assert r2.status_code == 200, r2.text
+    text = docx_text(r2.content)
+    assert "01/2026/HĐDV/EZS-ORGANICA" in text
+    assert ("ký ngày 01 tháng 01 năm 2026 và Phụ lục hợp đồng số PLHD-01/ORGANICA ký ngày "
+            "31 tháng 07 năm 2026") in text
+
+
 # =========================================================================== generate
 def test_generate_returns_docx_and_stores_nothing(env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
