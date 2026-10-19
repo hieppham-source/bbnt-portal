@@ -5,14 +5,29 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from app.core.calculation import BbntItemRow, CommissionResult
+from app.core.calculation import BbntItemRow, CommissionResult, NmvResult
 from app.core.numbering import BbntNumber
 from app.docx.vn_text import amount_in_words, format_int, format_percent, format_vnd
 
+_VND = Decimal(1)
+
 _HONORIFIC = re.compile(r"^(ông|bà|anh|chị|mr\.?|mrs\.?|ms\.?)\s+", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class BrandBreakdown:
+    """NMV riêng của 1 brand trong group (link order kiểu "1 tab/brand" — xem
+    :func:`app.services.order_tabs.detect_brand_tabs`). Không giữ ``Brand`` trực tiếp (tránh vòng import
+    ``app.master.models`` <-> module này) — chỉ giữ mã/tên đã tra sẵn."""
+
+    index: int
+    brand_code: str
+    brand_name: str
+    order_tab: str
+    nmv: NmvResult
 
 
 @dataclass(frozen=True)
@@ -58,9 +73,12 @@ def build_render_context(
     cancellation_rate: Decimal | None,
     commission: CommissionResult,
     items: Sequence[BbntItemRow],
-) -> tuple[dict[str, str], list[dict[str, str]]]:
-    """Trả về ``(values, item_rows)`` toàn chuỗi. Template nào dùng token nào thì lấy token đó;
-    key thừa (vd ``vat_amount`` với template SASSY) được bỏ qua."""
+    brand_breakdown: Sequence[BrandBreakdown] = (),
+) -> tuple[dict[str, str], list[dict[str, str]], list[dict[str, Any]]]:
+    """Trả về ``(values, item_rows, brand_blocks)`` toàn chuỗi. Template nào dùng token nào thì lấy token đó;
+    key thừa (vd ``vat_amount`` với template SASSY) được bỏ qua. ``brand_blocks`` rỗng nếu link order không
+    phải kiểu "1 tab/brand" (xem :func:`app.services.order_tabs.detect_brand_tabs`) — template không có
+    marker ``{{brand_section_start}}`` thì có truyền ``brands=()`` cũng không ảnh hưởng gì."""
     values = {
         "bbnt_number": str(number),
         "program_name": program,
@@ -92,4 +110,21 @@ def build_render_context(
     }
     rows = [{"name": i.product_name or i.sku or "", "sku": i.sku or "", "brand": i.brand_name or "",
              "quantity": format_int(i.quantity), "revenue": format_vnd(i.revenue)} for i in items]
-    return values, rows
+    brand_blocks = [_build_brand_block(b) for b in brand_breakdown]
+    return values, rows, brand_blocks
+
+
+def _build_brand_block(b: BrandBreakdown) -> dict[str, Any]:
+    gmv_b = b.nmv.gmv_estimated.quantize(_VND, ROUND_HALF_UP)
+    nmv_b = b.nmv.nmv.quantize(_VND, ROUND_HALF_UP)
+    values = {
+        "index": format_int(b.index),
+        "name": b.brand_name,
+        "gmv_estimated": format_vnd(gmv_b),
+        "nmv": format_vnd(nmv_b),
+        "cancellation_rate_pct": format_percent(b.nmv.cancellation_rate),
+        "total_quantity": format_int(sum(i.quantity for i in b.nmv.items)),
+    }
+    items = [{"name": i.product_name or i.sku or "", "sku": i.sku or "", "brand": i.brand_name or "",
+              "quantity": format_int(i.quantity), "revenue": format_vnd(i.revenue)} for i in b.nmv.items]
+    return {"values": values, "items": items}

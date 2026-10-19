@@ -7,6 +7,7 @@ API tạo BBNT — không lưu gì trên server.
 from __future__ import annotations
 
 import re
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -19,6 +20,7 @@ from app.docx.vn_text import amount_in_words
 from app.errors import fail
 from app.schemas.bbnt import (
     BbntRequest,
+    BrandBreakdownOut,
     ContractOut,
     ErrorOut,
     FiguresOut,
@@ -39,6 +41,7 @@ from app.services.sheets import (
 router = APIRouter(prefix="/api/v1/bbnt", tags=["BBNT"])
 
 MAX_WARNINGS_IN_RESPONSE = 500
+VND = Decimal(1)
 
 _ERRORS: dict[int | str, dict[str, Any]] = {
     422: {"model": ErrorOut, "description": "Payload / Sheet master / file order không hợp lệ"},
@@ -99,6 +102,15 @@ def to_preview(r: BbntResult) -> PreviewResponse:
             total_payable_words=amount_in_words(c.total_payable)),
         items=[ItemOut(brand_name=i.brand_name, sku=i.sku, product_name=i.product_name, quantity=i.quantity,
                        revenue=i.revenue) for i in r.nmv.items],
+        brand_breakdown=[
+            BrandBreakdownOut(
+                index=b.index, brand_code=b.brand_code, brand_name=b.brand_name, order_tab=b.order_tab,
+                gmv_estimated=b.nmv.gmv_estimated.quantize(VND, ROUND_HALF_UP),
+                nmv=b.nmv.nmv.quantize(VND, ROUND_HALF_UP), cancellation_rate=b.nmv.cancellation_rate,
+                items=[ItemOut(brand_name=i.brand_name, sku=i.sku, product_name=i.product_name,
+                               quantity=i.quantity, revenue=i.revenue) for i in b.nmv.items])
+            for b in r.brand_breakdown
+        ],
         order_line_count=len(r.lines), other_brand_line_count=r.other_brand_lines,
         order_tab=r.order.tab if r.order else None, order_tabs=r.order.candidates if r.order else [],
         order_file_kind=r.order_kind, order_header_row=r.parse.header_row,

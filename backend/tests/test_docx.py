@@ -14,6 +14,7 @@ from lxml import etree
 from app.docx import filler as filler_mod
 from app.docx.filler import (
     BbntDocxRenderer,
+    BrandBlock,
     LegalTextModifiedError,
     MissingValueError,
     TemplateError,
@@ -104,6 +105,33 @@ def c14n(data: bytes) -> bytes:
     return etree.tostring(etree.fromstring(data), method="c14n")
 
 
+def strip_brand_section(d: docx.document.Document) -> docx.document.Document:
+    """Mô phỏng đúng những gì :meth:`BbntDocxRenderer._expand_brand_sections` làm khi ``brands=()``: xoá khối
+    mẫu ``{{brand_section_start}}``..``{{brand_section_end}}`` (nếu template có) khỏi ``d`` tại chỗ — để so
+    fingerprint công bằng giữa template gốc (còn khối mẫu) và output (brand=() -> khối bị xoá trắng)."""
+    body = d.element.body
+    start = end = None
+    for child in body:
+        if child.tag != W_P:
+            continue
+        text = paragraph_text(child).strip()
+        if start is None and text == "{{" + filler_mod.BRAND_START + "}}":
+            start = child
+        elif start is not None and text == "{{" + filler_mod.BRAND_END + "}}":
+            end = child
+            break
+    if start is None or end is None:
+        return d
+    protos = []
+    node = start.getnext()
+    while node is not None and node is not end:
+        protos.append(node)
+        node = node.getnext()
+    for el in (start, *protos, end):
+        el.getparent().remove(el)
+    return d
+
+
 def fingerprint(d, *, skip_item_rows: bool = True) -> list[tuple[bytes, tuple[bytes, ...]]]:
     """Định dạng của mọi paragraph (pPr + chuỗi rPr) bỏ qua text — để so template vs output."""
     out = []
@@ -128,6 +156,7 @@ def test_tagged_templates_expose_expected_tokens(kind):
     spec = BbntDocxRenderer(TAGGED[kind]).spec
     assert spec.scalars == EXPECTED[kind]
     assert spec.item_fields == {"name", "quantity", "revenue"}
+    assert spec.brand_fields == {"index", "name", "gmv_estimated", "nmv", "cancellation_rate_pct", "total_quantity"}
 
 
 @pytest.mark.parametrize("n_items", [0, 1, 3, 60])
@@ -150,7 +179,9 @@ def test_render_preserves_formatting_and_parts(kind, n_items):
             assert a == b, name
 
     # 2) document.xml: sectPr (margins/page) và định dạng mọi paragraph ngoài dòng sản phẩm giữ nguyên
-    dt, do = load(tpl), load(out.content)
+    # (brands=() -> khối {{brand_section_start}}..{{brand_section_end}} bị xoá trắng khỏi output, nên so
+    # fingerprint phải bỏ khối đó khỏi template trước — xem strip_brand_section)
+    dt, do = strip_brand_section(load(tpl)), load(out.content)
     sect = lambda d: etree.tostring(d.element.body.find("{*}sectPr"))  # noqa: E731
     assert sect(dt) == sect(do)
     assert fingerprint(dt) == fingerprint(do)
@@ -329,3 +360,86 @@ def test_empty_cell_token_inherits_paragraph_mark_font():
     run = next(r for r in p.iter(W_R) if "{{commission_amount}}" in "".join(t.text or "" for t in r.iter("{*}t")))
     xml = etree.tostring(run.find(W_RPR)).decode()
     assert "Times New Roman" in xml and 'w:sz w:val="24"' in xml and "<w:b" in xml
+
+
+# =========================================================================== brand section (multi-brand BBNT)
+def _brand_section_doc():
+    def build(d):
+        d.add_paragraph("Trước khối")
+        d.add_paragraph("{{brand_section_start}}")
+        d.add_paragraph("{{brand.index}}. {{brand.name}}")
+        t = d.add_table(rows=2, cols=2)
+        t.cell(0, 0).text, t.cell(0, 1).text = "TÊN", "SL"
+        t.cell(1, 0).text, t.cell(1, 1).text = "{{item.name}}", "{{item.quantity}}"
+        d.add_paragraph("GMV: {{brand.gmv_estimated}}")
+        d.add_paragraph("{{brand_section_end}}")
+        t2 = d.add_table(rows=2, cols=2)
+        t2.cell(0, 0).text, t2.cell(0, 1).text = "TÊN", "SL"
+        t2.cell(1, 0).text, t2.cell(1, 1).text = "{{item.name}}", "{{item.quantity}}"
+        d.add_paragraph("Sau khối")
+    return make_doc(build)
+
+
+def test_brand_sections_expose_brand_fields_separately_from_scalars():
+    r = BbntDocxRenderer(_brand_section_doc())
+    assert r.spec.brand_fields == {"index", "name", "gmv_estimated"}
+    assert r.spec.scalars == frozenset()       # {{brand.*}} không lẫn vào scalars
+    assert r.spec.item_fields == {"name", "quantity"}
+
+
+def test_brand_sections_render_multiple_brands_with_own_scoped_items():
+    r = BbntDocxRenderer(_brand_section_doc())
+    brands = [
+        BrandBlock({"index": "1", "name": "ANESSA", "gmv_estimated": "1.000.000"},
+                  [{"name": "Kem chống nắng", "quantity": "3"}]),
+        BrandBlock({"index": "2", "name": "ELIXIR", "gmv_estimated": "2.000.000"},
+                  [{"name": "Serum", "quantity": "1"}, {"name": "Toner", "quantity": "2"}]),
+    ]
+    out = r.render({}, [{"name": "TONG", "quantity": "6"}], brands=brands, seed=3)
+    assert out.item_rows == 1 + 2 + 1      # 1 (ANESSA) + 2 (ELIXIR) trong khối + 1 dòng TỔNG ngoài khối
+    d = load(out.content)
+    text = all_text(d)
+    assert "{{" not in text
+    assert "Trước khối" in text and "Sau khối" in text      # nội dung ngoài khối giữ nguyên
+    assert "1. ANESSA" in text and "GMV: 1.000.000" in text
+    assert "2. ELIXIR" in text and "GMV: 2.000.000" in text
+    # mỗi brand chỉ thấy item của CHÍNH nó, bảng ngoài khối chỉ thấy dòng TỔNG
+    tables = list(d.element.body.iter(W_TBL))
+    assert len(tables) == 3      # 2 khối brand (mỗi khối nhân bản 1 bảng) + 1 bảng TỔNG ngoài khối
+    rows_texts = [[paragraph_text(p) for p in tr.iter(W_P)] for tbl in tables for tr in tbl.findall(W_TR)]
+    assert ["Kem chống nắng", "3"] in rows_texts
+    assert ["Serum", "1"] in rows_texts and ["Toner", "2"] in rows_texts
+    assert ["TONG", "6"] in rows_texts
+    # thứ tự: khối ANESSA (header + bảng) trước khối ELIXIR, cả hai trước bảng TỔNG ngoài khối
+    assert text.index("1. ANESSA") < text.index("2. ELIXIR") < text.index("TONG")
+
+
+def test_brand_sections_empty_collapses_to_unchanged_document():
+    r = BbntDocxRenderer(_brand_section_doc())
+    out = r.render({}, [{"name": "TONG", "quantity": "6"}], brands=(), seed=1)
+    text = all_text(load(out.content))
+    assert "{{" not in text
+    assert "brand_section" not in text
+    assert "ANESSA" not in text and "ELIXIR" not in text
+    assert "Trước khối" in text and "Sau khối" in text and "TONG" in text
+
+
+def test_brand_sections_missing_values_raise():
+    r = BbntDocxRenderer(_brand_section_doc())
+    with pytest.raises(MissingValueError, match=r"brands\[0\]\.gmv_estimated"):
+        r.render({}, [], brands=[BrandBlock({"index": "1", "name": "ANESSA"})])
+
+
+def test_brand_sections_missing_item_values_raise():
+    r = BbntDocxRenderer(_brand_section_doc())
+    brand = BrandBlock({"index": "1", "name": "ANESSA", "gmv_estimated": "1.000.000"}, [{"name": "x"}])
+    with pytest.raises(MissingValueError, match=r"brands\[0\]\.item\[0\]\.quantity"):
+        r.render({}, [], brands=[brand])
+
+
+def test_brand_sections_not_leaked_as_literal_text_without_brands():
+    """Template có marker nhưng không truyền ``brands`` nào -> KHÔNG còn token {{brand.*}} trong output
+    (khối bị xoá trắng), khác với token {{item.*}}/scalar thiếu giá trị (lỗi ngay)."""
+    r = BbntDocxRenderer(_brand_section_doc())
+    out = r.render({}, [], brands=())
+    assert "{{brand" not in all_text(load(out.content))

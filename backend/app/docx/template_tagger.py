@@ -16,6 +16,7 @@ Sau khi gắn token, file được nạp lại bằng :class:`BbntDocxRenderer` 
 """
 from __future__ import annotations
 
+import copy
 import io
 import re
 import sys
@@ -27,9 +28,10 @@ from docx.document import Document as DocxDocument
 from docx.oxml.ns import qn
 from lxml import etree
 
-from .filler import BbntDocxRenderer
+from .filler import BRAND_END, BRAND_START, BbntDocxRenderer
 from .ooxml import (
     W_P,
+    W_R,
     W_RPR,
     W_T,
     W_TBL,
@@ -139,6 +141,51 @@ class _Doc:
                                  ("{{gmv_estimated}}", "{{nmv}}", "{{cancellation_rate_pct}}"), strict=True):
                 self.set_cell(tc, token)
 
+    def brand_section(self) -> None:
+        """Chèn khối LẶP LẠI theo brand (``{{brand_section_start}}``..``{{brand_section_end}}``) NGAY TRƯỚC
+        bảng sản phẩm + bảng A/B/tỷ lệ hủy TỔNG đã gắn token ở trên (2 bảng đó GIỮ NGUYÊN — vẫn dùng cho
+        TẤT CẢ brand gộp, là căn cứ tính hoa hồng trên tổng doanh thu). Nhân bản chính 2 bảng đã tokenize đó
+        rồi đổi các token top-level (``{{nmv}}``, ``{{gmv_estimated}}``, ``{{cancellation_rate_pct}}``,
+        ``{{total_quantity}}``) trong bản sao sang namespace ``{{brand.*}}``; ``{{item.*}}`` giữ nguyên tên vì
+        mỗi khối brand tự có danh sách sản phẩm riêng lúc render (xem :class:`app.docx.filler.BrandBlock`).
+        PHẢI gọi SAU :meth:`item_table` và :meth:`ab_tables` (cần 2 bảng đã tokenize làm gốc nhân bản)."""
+        items_tbl = self.tables("TÊN SẢN PHẨM")[0]
+        ab_tbl = self.tables("Doanh thu ước tính (A)")[0]
+        items_clone = copy.deepcopy(items_tbl)
+        ab_clone = copy.deepcopy(ab_tbl)
+        _retarget(items_clone, {"{{total_quantity}}": "{{brand.total_quantity}}", "{{nmv}}": "{{brand.nmv}}"})
+        _retarget(ab_clone, {"{{gmv_estimated}}": "{{brand.gmv_estimated}}", "{{nmv}}": "{{brand.nmv}}",
+                             "{{cancellation_rate_pct}}": "{{brand.cancellation_rate_pct}}"})
+
+        heading = etree.Element(W_P)
+        append_text(heading, "{{brand.index}}. {{brand.name}}")
+        header_cell_p = cell_paragraphs(row_cells(table_rows(items_tbl)[0])[0])[0]
+        header_run = next(header_cell_p.iter(W_R), None)
+        heading_run = heading.find(W_R)
+        if header_run is not None and header_run.find(W_RPR) is not None and heading_run is not None:
+            heading_run.insert(0, copy.deepcopy(header_run.find(W_RPR)))
+
+        start_marker, end_marker = etree.Element(W_P), etree.Element(W_P)
+        append_text(start_marker, "{{" + BRAND_START + "}}")
+        append_text(end_marker, "{{" + BRAND_END + "}}")
+
+        for el in (start_marker, heading, items_clone, ab_clone, end_marker):
+            items_tbl.addprevious(el)
+
+
+def _retarget(el: etree._Element, mapping: dict[str, str]) -> None:
+    """Đổi tên token ``{{...}}`` NGUYÊN CỤM trong mọi ``w:t`` của ``el`` theo ``mapping`` — dùng khi nhân bản
+    1 bảng ĐÃ gắn token sang namespace khác (vd top-level -> ``brand.*``). An toàn vì mỗi token ở đây do
+    chính tagger tạo ra bằng :meth:`_Doc.set_cell`/``append_text`` nên luôn nằm trọn trong 1 ``w:t``, không
+    bị Word tách qua nhiều run như text người dùng gõ tay (khác với :func:`replace_span`)."""
+    for t in el.iter(W_T):
+        text = t.text or ""
+        new = text
+        for old, repl in mapping.items():
+            new = new.replace(old, repl)
+        if new != text:
+            t.text = new
+
 
 def _common_party_a(d: _Doc, labels: dict[str, str]) -> None:
     d.party_a({"BÊN A:": "{{party_a_name}}", **labels})
@@ -160,6 +207,7 @@ def tag_ezs(d: _Doc) -> None:
     d.replace(revenue, "XXX VND", "{{nmv}} VND")
     d.replace_dots(d.para("(Bằng chữ:", after=revenue), "{{nmv_words}}")
     d.ab_tables()
+    d.brand_section()
     commission = d.tables("Chi tiết")[0]
     r = table_rows(commission)
     d.replace(cell_paragraphs(row_cells(r[1])[0])[0], "xx%", "{{commission_rate_pct}}")
@@ -192,6 +240,7 @@ def tag_sassy(d: _Doc) -> None:
                        if "(Bằng chữ:" in paragraph_text(p) and _after(items_tbl, p))
     d.replace_dots(first_words, "{{nmv_words}}")
     d.ab_tables()
+    d.brand_section()
     commission = d.tables("Chi tiết")[0]
     r = table_rows(commission)
     d.replace(cell_paragraphs(row_cells(r[1])[0])[0], "XX%", "{{commission_rate_pct}}")
@@ -261,6 +310,8 @@ def _inherit_paragraph_font(p: etree._Element, token: str) -> None:
 TAGGERS: dict[str, Callable[[_Doc], None]] = {"ezs": tag_ezs, "sassy": tag_sassy}
 
 EXPECTED_ITEM_FIELDS = frozenset({"name", "quantity", "revenue"})
+EXPECTED_BRAND_FIELDS = frozenset({"index", "name", "gmv_estimated", "nmv", "cancellation_rate_pct",
+                                   "total_quantity"})
 EXPECTED_COMMON = frozenset({
     "bbnt_number", "program_name", "contract_no", "contract_signed", "party_a_name", "party_a_address", "party_a_phone",
     "party_a_tax_code", "party_a_bank_account", "party_a_representative", "party_a_representative_title",
@@ -281,9 +332,11 @@ def tag_template(kind: str, source: bytes) -> bytes:
     doc.save(buf)
     out = buf.getvalue()
     spec = BbntDocxRenderer(out).spec
-    if spec.scalars != EXPECTED[kind] or spec.item_fields != EXPECTED_ITEM_FIELDS:
+    if (spec.scalars != EXPECTED[kind] or spec.item_fields != EXPECTED_ITEM_FIELDS
+            or spec.brand_fields != EXPECTED_BRAND_FIELDS):
         raise TaggingError(f"Token không khớp kỳ vọng: thiếu {sorted(EXPECTED[kind] - spec.scalars)}, "
-                           f"thừa {sorted(spec.scalars - EXPECTED[kind])}")
+                           f"thừa {sorted(spec.scalars - EXPECTED[kind])}, "
+                           f"brand field lệch: {sorted(EXPECTED_BRAND_FIELDS ^ spec.brand_fields)}")
     return out
 
 

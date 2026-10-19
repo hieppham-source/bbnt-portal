@@ -6,6 +6,15 @@ Cú pháp template (soạn thẳng trong Word được, kể cả khi Word cắt
 * ``{{bbnt_number}}``, ``{{nmv}}``, ``{{total_payable_words}}``... — giá trị scalar.
 * Dòng bảng chứa ``{{item.name}}`` / ``{{item.quantity}}`` / ``{{item.revenue}}`` là **dòng mẫu**:
   được nhân bản cho từng SKU (giữ nguyên trPr/tcPr/borders/shading), rồi dòng mẫu bị xoá.
+* Đoạn/bảng nằm giữa 2 paragraph ``{{brand_section_start}}`` và ``{{brand_section_end}}`` (top-level trong
+  body/header/footer, không lồng trong bảng khác) là **khối mẫu theo brand**: nhân bản cho từng phần tử của
+  ``brands`` (mỗi phần tử 1 :class:`BrandBlock`), token ``{{brand.xxx}}`` bên trong lấy từ
+  ``BrandBlock.values`` (key KHÔNG có tiền tố ``brand.``), còn ``{{item.*}}`` bên trong khối (nếu có) được
+  nhân bản RIÊNG cho khối đó từ ``BrandBlock.items`` — không ảnh hưởng tới bảng ``{{item.*}}`` khác nằm
+  ngoài khối (vd bảng TỔNG CỘNG tất cả brand). Dùng khi 1 BBNT gộp nhiều brand (group) và cần liệt kê sản
+  phẩm/doanh thu RIÊNG từng brand trước khi tính hoa hồng trên TỔNG. 2 paragraph marker và khối mẫu gốc bị
+  xoá sau khi nhân bản; ``brands=()`` (mặc định) -> khối bị xoá trắng, tài liệu không đổi so với trước khi
+  có tính năng này (template không có marker thì cũng bỏ qua hoàn toàn, không ảnh hưởng).
 
 Bảo đảm:
 
@@ -32,6 +41,7 @@ from docx.document import Document as DocxDocument
 from lxml import etree
 
 from .ooxml import (
+    W_P,
     W_R,
     W_TBL,
     W_TR,
@@ -44,6 +54,9 @@ from .ooxml import (
 
 TOKEN_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*\}\}")
 ITEM_PREFIX = "item."
+BRAND_PREFIX = "brand."
+BRAND_START = "brand_section_start"
+BRAND_END = "brand_section_end"
 
 #: Chuỗi ngày tháng pháp lý — KHÔNG được thay đổi bởi quá trình fill.
 LEGAL_DATE_RE = re.compile(
@@ -79,6 +92,19 @@ class LegalTextModifiedError(RuntimeError):
 class TemplateSpec:
     scalars: frozenset[str]
     item_fields: frozenset[str]
+    brand_fields: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class BrandBlock:
+    """1 khối lặp lại theo brand (xem ``{{brand_section_start}}`` trong docstring module).
+
+    ``values``: token ``{{brand.xxx}}`` (key KHÔNG có tiền tố ``brand.``) -> chuỗi đã định dạng.
+    ``items``: dòng bảng ``{{item.*}}`` RIÊNG của khối này — không dùng chung với ``items`` top-level.
+    """
+
+    values: Mapping[str, str]
+    items: Sequence[Mapping[str, str]] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +139,7 @@ class BbntDocxRenderer:
     def _inspect(doc: DocxDocument) -> TemplateSpec:
         scalars: set[str] = set()
         items: set[str] = set()
+        brands: set[str] = set()
         proto_rows: dict[int, int] = {}
         for root in iter_story_roots(doc):
             for p in iter_paragraphs(root):
@@ -122,6 +149,8 @@ class BbntDocxRenderer:
                     if any(a < m.end() and m.start() < b for a, b in legal):
                         raise TemplateError(f"Token {m.group(0)} nằm trong chuỗi ngày pháp lý: {text!r}")
                     name = m.group(1)
+                    if name in (BRAND_START, BRAND_END):
+                        continue
                     if name.startswith(ITEM_PREFIX):
                         row = _row_of(p)
                         if row is None:
@@ -131,9 +160,11 @@ class BbntDocxRenderer:
                         if proto_rows[id(tbl)] != id(row):
                             raise TemplateError("Mỗi bảng chỉ được có 1 dòng mẫu {{item.*}}")
                         items.add(name[len(ITEM_PREFIX):])
+                    elif name.startswith(BRAND_PREFIX):
+                        brands.add(name[len(BRAND_PREFIX):])
                     else:
                         scalars.add(name)
-        return TemplateSpec(frozenset(scalars), frozenset(items))
+        return TemplateSpec(frozenset(scalars), frozenset(items), frozenset(brands))
 
     # ------------------------------------------------------------------ render
     def render(
@@ -141,6 +172,7 @@ class BbntDocxRenderer:
         values: Mapping[str, str],
         items: Sequence[Mapping[str, str]] = (),
         *,
+        brands: Sequence[BrandBlock] = (),
         strip_comments: bool = False,
         seed: int | None = None,
     ) -> RenderResult:
@@ -149,15 +181,18 @@ class BbntDocxRenderer:
         Args:
             values: token -> chuỗi ĐÃ định dạng (số tiền '17.185.465', kỳ '05.26'...). Chỉ nhận ``str``.
             items: mỗi phần tử là 1 dòng bảng sản phẩm, key = phần sau ``item.`` (``name``, ``quantity``...).
+            brands: khối lặp lại theo brand (xem ``{{brand_section_start}}`` trong docstring module) —
+                rỗng (mặc định) hoặc template không có marker -> không đổi gì so với trước khi có tính năng.
             strip_comments: xoá marker comment hướng dẫn nội bộ khỏi bản xuất (mặc định giữ nguyên như template).
-            seed: seed sinh paraId cho dòng clone (để output tái lập được trong test).
+            seed: seed sinh paraId cho dòng/khối clone (để output tái lập được trong test).
         """
-        self._check_values(values, items)
+        self._check_values(values, items, brands)
         doc = self._load()
         legal_before = self._snapshot_legal_text(doc)
         rng = random.Random(seed)
 
-        rows = self._expand_item_rows(doc, items, rng)
+        brand_item_rows = self._expand_brand_sections(doc, brands, rng)
+        rows = self._expand_item_rows(doc, items, rng) + brand_item_rows
         for root in iter_story_roots(doc):
             for p in iter_paragraphs(root):
                 self._fill_paragraph(p, values)
@@ -171,21 +206,30 @@ class BbntDocxRenderer:
         content = buf.getvalue()
         return RenderResult(content, hashlib.sha256(content).hexdigest(), rows)
 
-    def _check_values(self, values: Mapping[str, str], items: Sequence[Mapping[str, str]]) -> None:
+    def _check_values(self, values: Mapping[str, str], items: Sequence[Mapping[str, str]],
+                      brands: Sequence[BrandBlock] = ()) -> None:
         missing = [k for k in self.spec.scalars if k not in values]
         for i, item in enumerate(items):
             missing += [f"item[{i}].{k}" for k in self.spec.item_fields if k not in item]
+        for bi, brand in enumerate(brands):
+            missing += [f"brands[{bi}].{k}" for k in self.spec.brand_fields if k not in brand.values]
+            for ii, item in enumerate(brand.items):
+                missing += [f"brands[{bi}].item[{ii}].{k}" for k in self.spec.item_fields if k not in item]
         if missing:
             raise MissingValueError(missing)
         bad = [k for k, v in values.items() if not isinstance(v, str)]
         bad += [f"item.{k}" for it in items for k, v in it.items() if not isinstance(v, str)]
+        bad += [f"brand.{k}" for b in brands for k, v in b.values.items() if not isinstance(v, str)]
+        bad += [f"brand.item.{k}" for b in brands for it in b.items for k, v in it.items()
+               if not isinstance(v, str)]
         if bad:
             raise TypeError(f"Giá trị phải là str đã định dạng: {', '.join(sorted(set(bad)))}")
 
     @staticmethod
     def _fill_paragraph(p: etree._Element, values: Mapping[str, str] | None,
-                        item: Mapping[str, str] | None = None) -> None:
-        """Thay token trong 1 paragraph. ``values=None`` -> chỉ thay token item (pass nhân bản dòng)."""
+                        item: Mapping[str, str] | None = None,
+                        brand: Mapping[str, str] | None = None) -> None:
+        """Thay token trong 1 paragraph. ``values=None`` -> chỉ thay token item/brand (pass nhân bản dòng/khối)."""
         text = paragraph_text(p)
         matches = list(TOKEN_RE.finditer(text))
         for m in reversed(matches):  # thay từ cuối để offset phía trước không đổi
@@ -194,6 +238,10 @@ class BbntDocxRenderer:
                 if item is None:
                     continue
                 value = item[name[len(ITEM_PREFIX):]]
+            elif name.startswith(BRAND_PREFIX):
+                if brand is None:
+                    continue
+                value = brand[name[len(BRAND_PREFIX):]]
             elif values is None:
                 continue
             else:
@@ -205,11 +253,17 @@ class BbntDocxRenderer:
         """Nhân bản dòng mẫu cho từng item, chèn ngay trước dòng mẫu rồi xoá dòng mẫu."""
         protos: list[etree._Element] = []
         for root in iter_story_roots(doc):
-            for tbl in root.iter(W_TBL):
-                for tr in tbl.findall(W_TR):
-                    if any(m.group(1).startswith(ITEM_PREFIX)
-                           for p in iter_paragraphs(tr) for m in TOKEN_RE.finditer(paragraph_text(p))):
-                        protos.append(tr)
+            protos += self._item_protos_in(root)
+        return self._expand_item_rows_in(protos, items, rng)
+
+    @staticmethod
+    def _item_protos_in(root: etree._Element) -> list[etree._Element]:
+        return [tr for tbl in root.iter(W_TBL) for tr in tbl.findall(W_TR)
+                if any(m.group(1).startswith(ITEM_PREFIX)
+                      for p in iter_paragraphs(tr) for m in TOKEN_RE.finditer(paragraph_text(p)))]
+
+    def _expand_item_rows_in(self, protos: Sequence[etree._Element], items: Sequence[Mapping[str, str]],
+                             rng: random.Random) -> int:
         for proto in protos:
             for item in items:
                 clone = copy.deepcopy(proto)
@@ -219,6 +273,42 @@ class BbntDocxRenderer:
                 proto.addprevious(clone)
             proto.getparent().remove(proto)
         return len(items) * len(protos)
+
+    def _expand_brand_sections(self, doc: DocxDocument, brands: Sequence[BrandBlock],
+                               rng: random.Random) -> int:
+        """Nhân bản khối giữa ``{{brand_section_start}}``/``{{brand_section_end}}`` cho từng :class:`BrandBlock`
+        — mỗi khối tự fill token ``{{brand.*}}`` riêng và tự nhân bản ``{{item.*}}`` RIÊNG bên trong nó (không
+        đụng bảng ``{{item.*}}`` khác nằm ngoài khối). Trả về tổng số dòng item đã nhân bản bên trong các khối."""
+        item_rows = 0
+        for root in iter_story_roots(doc):
+            start = end = None
+            for child in root:
+                if child.tag != W_P:
+                    continue
+                text = paragraph_text(child).strip()
+                if start is None and text == "{{" + BRAND_START + "}}":
+                    start = child
+                elif start is not None and text == "{{" + BRAND_END + "}}":
+                    end = child
+                    break
+            if start is None or end is None:
+                continue
+            protos: list[etree._Element] = []
+            node = start.getnext()
+            while node is not None and node is not end:
+                protos.append(node)
+                node = node.getnext()
+            for brand in brands:
+                clones = [copy.deepcopy(el) for el in protos]
+                for el in clones:
+                    renew_paragraph_ids(el, rng)
+                    for p in iter_paragraphs(el):
+                        self._fill_paragraph(p, None, brand=brand.values)
+                    item_rows += self._expand_item_rows_in(self._item_protos_in(el), brand.items, rng)
+                    end.addprevious(el)
+            for el in (start, *protos, end):
+                el.getparent().remove(el)
+        return item_rows
 
     @staticmethod
     def _snapshot_legal_text(doc: DocxDocument) -> list[tuple[etree._Element, list[str]]]:

@@ -18,6 +18,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.core.calculation import (
     CommissionResult,
+    MappingConfig,
     MappingError,
     NmvResult,
     OrderLine,
@@ -33,13 +34,13 @@ from app.core.calculation import (
     parse_sheet,
 )
 from app.core.numbering import BbntNumber, BrandRef, NumberingError, YearMonth, generate_bbnt_number, normalize_months
-from app.docx.filler import LegalTextModifiedError, MissingValueError
+from app.docx.filler import BrandBlock, LegalTextModifiedError, MissingValueError
 from app.docx.vn_text import format_percent
 from app.errors import fail
 from app.master.index import Scope, find_contract, find_mapping, resolve_scope
 from app.master.models import Contract, Entity, MasterData, OrderMapping
-from app.services.bbnt_document import build_render_context, program_name
-from app.services.order_tabs import TabChoice, choose_order_tab
+from app.services.bbnt_document import BrandBreakdown, build_render_context, program_name
+from app.services.order_tabs import TabChoice, choose_order_tab, detect_brand_tabs
 from app.services.sheets import OrderWorkbook
 from app.services.templates import TemplateRegistry
 
@@ -87,6 +88,7 @@ class BbntResult:
     order_kind: str = "google_sheet"
     values: dict[str, str] = field(default_factory=dict)
     content: bytes | None = None
+    brand_breakdown: list[BrandBreakdown] = field(default_factory=list)
 
     @property
     def warnings(self) -> list[RowIssue]:
@@ -123,17 +125,24 @@ class BbntGenerator:
         mapping = find_mapping(master, channel, inp.mapping_code)
         renderer = self.templates.renderer(entity_code, contract.model, channel) if render else None
 
-        # 2. order: mở file, chọn tab, parse
+        # 2. order: mở file, chọn tab(s), parse
         config = mapping.to_config()
         book = open_order()
-        choice = choose_order_tab(book, config, mapping_code=mapping.code, scope=scope, campaign=inp.campaign_name,
-                                  months=months, requested=inp.order_tab)
-        try:
-            parsed = parse_sheet(book.read(choice.tab), config)
-        except MappingError as exc:
-            raise fail("MAPPING_MISMATCH", f"Tab '{choice.tab}' không khớp mapping {mapping.code}: {exc}",
-                       details={"tabs": choice.candidates}) from exc
-        lines, other = _filter_brands(parsed, mapping, scope)
+        brand_tabs = None if inp.order_tab else detect_brand_tabs(book, config, scope=scope)
+        brand_breakdown: list[BrandBreakdown] = []
+        if brand_tabs:
+            parsed, lines, other, brand_breakdown = self._read_brand_tabs(book, config, mapping, scope,
+                                                                          brand_tabs, months)
+            choice = None
+        else:
+            choice = choose_order_tab(book, config, mapping_code=mapping.code, scope=scope,
+                                      campaign=inp.campaign_name, months=months, requested=inp.order_tab)
+            try:
+                parsed = parse_sheet(book.read(choice.tab), config)
+            except MappingError as exc:
+                raise fail("MAPPING_MISMATCH", f"Tab '{choice.tab}' không khớp mapping {mapping.code}: {exc}",
+                           details={"tabs": choice.candidates}) from exc
+            lines, other = _filter_brands(parsed, mapping, scope)
 
         # 3. tính
         nmv = compute_nmv(lines, months)
@@ -146,7 +155,7 @@ class BbntGenerator:
         nmv_vnd = nmv.nmv.quantize(VND, ROUND_HALF_UP)
         if nmv_vnd <= 0:
             hint = f" ({other} dòng thuộc brand khác bị loại)" if other else ""
-            if len(choice.candidates) > 1:
+            if choice is not None and len(choice.candidates) > 1:
                 hint += f" — đang đọc tab '{choice.tab}', chọn tab khác nếu sai"
             raise fail("NO_DELIVERED_ORDERS", f"Không có đơn 'Đã giao' nào trong kỳ nghiệm thu{hint}",
                        details=issues[:50])
@@ -156,19 +165,63 @@ class BbntGenerator:
 
         # 4-5. số + render
         program = program_name(scope.display, inp.campaign_name, number)
-        values, item_rows = build_render_context(
+        values, item_rows, brand_blocks = build_render_context(
             number=number, program=program, contract_no=contract.contract_no,
             contract_signed_on=contract.signed_on or contract.valid_from, party_a=contract.party_a,
             gmv_estimated=gmv_vnd, nmv=nmv_vnd, cancellation_rate=nmv.cancellation_rate,
-            commission=commission, items=nmv.items)
+            commission=commission, items=nmv.items, brand_breakdown=brand_breakdown)
         result = BbntResult(number, entity, scope, contract, mapping, tax, parsed, lines, other, nmv,
-                            gmv_vnd, nmv_vnd, commission, program, choice, book.kind, values)
+                            gmv_vnd, nmv_vnd, commission, program, choice, book.kind, values,
+                            brand_breakdown=brand_breakdown)
         if renderer is not None:
             try:
-                result.content = renderer.render(values, item_rows, strip_comments=inp.strip_comments).content
+                brands = [BrandBlock(b["values"], b["items"]) for b in brand_blocks]
+                result.content = renderer.render(values, item_rows, brands=brands,
+                                                 strip_comments=inp.strip_comments).content
             except (MissingValueError, LegalTextModifiedError) as exc:
                 raise fail("RENDER_FAILED", f"Không điền được template: {exc}", status=500) from exc
         return result
+
+    @staticmethod
+    def _read_brand_tabs(book: OrderWorkbook, config: MappingConfig, mapping: OrderMapping, scope: Scope,
+                         brand_tabs: dict[str, str], months: tuple[YearMonth, ...],
+                         ) -> tuple[ParseResult, list[OrderLine], int, list[BrandBreakdown]]:
+        """Đọc RIÊNG 1 tab cho mỗi brand (xem :func:`order_tabs.detect_brand_tabs`), gộp lại thành 1
+        ``ParseResult``/danh sách dòng chung (dùng tính NMV tổng + hoa hồng như cũ), đồng thời tính NMV
+        RIÊNG từng brand (:class:`BrandBreakdown`) để hiển thị từng khối trong file .docx. Brand trong group
+        không có tab trong file order kỳ này -> bỏ qua, không lỗi."""
+        all_lines: list[OrderLine] = []
+        all_issues: list[RowIssue] = []
+        rows_read = 0
+        header_row = 1
+        other = 0
+        breakdown: list[BrandBreakdown] = []
+        for idx, brand in enumerate(scope.brands, start=1):
+            tab = brand_tabs.get(brand.code)
+            if tab is None:
+                continue
+            try:
+                parsed_b = parse_sheet(book.read(tab), config)
+            except MappingError as exc:
+                raise fail("MAPPING_MISMATCH", f"Tab '{tab}' (brand {brand.code}) không khớp mapping "
+                                               f"{mapping.code}: {exc}", details={"tabs": [tab]}) from exc
+            lines_b, other_b = _filter_brands(parsed_b, mapping, Scope(scope.channel, (brand,), None, None))
+            if not lines_b:
+                continue
+            tagged = [replace(ln, brand_name=ln.brand_name or brand.name) for ln in lines_b]
+            all_lines += tagged
+            all_issues += parsed_b.issues
+            rows_read += parsed_b.rows_read
+            header_row = parsed_b.header_row
+            other += other_b
+            brand_nmv = compute_nmv(tagged, months)
+            breakdown.append(BrandBreakdown(idx, brand.code, brand.name, tab, brand_nmv))
+        if not all_lines:
+            raise fail("NO_DELIVERED_ORDERS", "Không brand nào trong group có đơn trong file order kỳ này "
+                                              f"(đã thử tab: {', '.join(brand_tabs.values())})")
+        parsed = ParseResult(tuple(all_lines), tuple(sorted(all_issues, key=lambda i: i.row_number)),
+                             rows_read, header_row)
+        return parsed, all_lines, other, breakdown
 
     @staticmethod
     def _number(entity: Entity, scope: Scope, months: tuple[YearMonth, ...], issued_at: datetime) -> BbntNumber:

@@ -134,6 +134,20 @@ class ItemOut(BaseModel):
     revenue: Decimal
 
 
+class BrandBreakdownOut(BaseModel):
+    """NMV riêng 1 brand trong group — chỉ có khi link order kiểu "1 tab/brand" (xem
+    ``detect_brand_tabs``); commission vẫn tính trên tổng (``figures``), không tính riêng theo brand."""
+
+    index: int
+    brand_code: str
+    brand_name: str
+    order_tab: str
+    gmv_estimated: Decimal
+    nmv: Decimal
+    cancellation_rate: Decimal | None
+    items: list[ItemOut]
+
+
 class PreviewResponse(BaseModel):
     bbnt_number: str
     file_name: str
@@ -146,6 +160,7 @@ class PreviewResponse(BaseModel):
     contract: ContractOut
     figures: FiguresOut
     items: list[ItemOut]
+    brand_breakdown: list[BrandBreakdownOut] = []
     order_line_count: int
     other_brand_line_count: int
     order_tab: str | None = None

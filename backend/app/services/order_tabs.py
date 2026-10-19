@@ -69,6 +69,38 @@ def score_tab(title: str, *, scope: Scope, campaign: str, months: Sequence[YearM
     return score
 
 
+def detect_brand_tabs(book: OrderWorkbook, config: MappingConfig, *, scope: Scope) -> dict[str, str] | None:
+    """Phát hiện link order kiểu "1 tab riêng cho mỗi brand trong group" (vd group KOSE: tab ANESSA /
+    ELIXIR / DPROGRAM) — khác với file 1 tab dùng chung nhiều brand qua cột BRAND_NAME (đã xử lý ở
+    :func:`app.services.generator._filter_brands`).
+
+    Trả về map ``mã brand -> tên tab`` CHỈ KHI khớp được RÕ RÀNG >= 2 brand khác nhau, mỗi brand khớp tên
+    với ĐÚNG 1 tab (không trùng tab với brand khác, không có brand nào khớp > 1 tab) — để an toàn, mọi
+    trường hợp mơ hồ trả về ``None`` và gọi lại :func:`choose_order_tab` kiểu cũ (1 tab chung cho cả scope).
+    Brand trong group không khớp tab nào -> coi như không phát sinh đơn kỳ này (không lỗi, không có trong map).
+    """
+    if not scope.is_group or len(scope.brands) < 2:
+        return None
+    heads = book.heads(book.tabs)
+    candidates: list[str] = []
+    for tab in book.tabs:
+        try:
+            locate_header(heads.get(tab, []), config)
+            candidates.append(tab)
+        except MappingError:
+            continue
+    if len(candidates) < 2:
+        return None
+    by_brand: dict[str, list[str]] = {}
+    for tab in candidates:
+        matched = [b.code for b in scope.brands if any(_contains_term(tab, t) for t in (b.code, b.name) if t)]
+        if len(matched) == 1:
+            by_brand.setdefault(matched[0], []).append(tab)
+    if len(by_brand) < 2 or any(len(tabs) > 1 for tabs in by_brand.values()):
+        return None
+    return {code: tabs[0] for code, tabs in by_brand.items()}
+
+
 def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code: str, scope: Scope,
                      campaign: str, months: Sequence[YearMonth], requested: str | None = None) -> TabChoice:
     heads = book.heads(book.tabs)

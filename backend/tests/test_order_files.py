@@ -12,8 +12,11 @@ import pytest
 from openpyxl import Workbook
 
 from app.core.calculation import FieldSpec, MappingConfig, MappingError, TargetField, locate_header, parse_sheet
+from app.master.index import Scope
+from app.master.models import Brand
 from app.services import sheets as sheets_mod
-from app.services.sheets import DriveScopeError, SheetAccessError, parse_sheet_url, xlsx_workbook
+from app.services.order_tabs import detect_brand_tabs
+from app.services.sheets import DriveScopeError, OrderWorkbook, SheetAccessError, parse_sheet_url, xlsx_workbook
 
 from .conftest import ORDER_URL_FB, sheet_id
 from .test_api import ORGANICA, Env, docx_text
@@ -104,6 +107,57 @@ def test_generate_fills_contract_signed_date(env):
     assert b["contract"]["signed_on"] == "2025-12-25" and b["contract"]["signed_on_source"] == "Ngày ký"
     text = docx_text(env.post("/api/v1/bbnt/generate", ORGANICA).content)
     assert "ký ngày 25 tháng 12 năm 2025" in text and "XX tháng XX" not in text
+
+
+# ----------------------------------------------------------------------------- 1 tab/brand (group, multi-brand)
+def _brand(code: str, group_code: str | None = "KOSE") -> Brand:
+    return Brand(channel="FB", code=code, name=code, group_code=group_code,
+                group_name="KOSE GROUP" if group_code else None, active=True, row=1)
+
+
+KOSE_GROUP = Scope("FB", (_brand("ANESSA"), _brand("ELIXIR"), _brand("DPROGRAM")), "KOSE", "KOSE GROUP")
+_ROW = ["03/05/2026", "H1", "SKU-01", "Sản phẩm", 1, 100_000, "ĐÃ GIAO"]
+
+
+def workbook(tabs: dict[str, list[list[Any]]]) -> OrderWorkbook:
+    return OrderWorkbook("xlsx", list(tabs), lambda t: tabs[t])
+
+
+def test_detect_brand_tabs_matches_each_brand_to_its_own_tab():
+    wb = workbook({"ANESSA": tab("ANESSA", [_ROW]), "ELIXIR": tab("ELIXIR", [_ROW]),
+                   "DPROGRAM": tab("DPROGRAM", [_ROW])})
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) == {"ANESSA": "ANESSA", "ELIXIR": "ELIXIR",
+                                                            "DPROGRAM": "DPROGRAM"}
+
+
+def test_detect_brand_tabs_skips_brand_with_no_matching_tab():
+    wb = workbook({"ANESSA": tab("ANESSA", [_ROW]), "ELIXIR": tab("ELIXIR", [_ROW])})
+    # DPROGRAM không có tab nào trong file order kỳ này -> bỏ qua, KHÔNG lỗi, KHÔNG có trong map trả về
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) == {"ANESSA": "ANESSA", "ELIXIR": "ELIXIR"}
+
+
+def test_detect_brand_tabs_none_for_single_brand_scope():
+    single = Scope("FB", (_brand("ORGANICA", group_code=None),), None, None)
+    wb = workbook({"ORGANICA": tab("ORGANICA", [_ROW])})
+    assert detect_brand_tabs(wb, CFG, scope=single) is None
+
+
+def test_detect_brand_tabs_none_when_fewer_than_2_tabs_match_mapping():
+    wb = workbook({"ANESSA": tab("ANESSA", [_ROW]), "Ghi chú": [["abc"]]})
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) is None
+
+
+def test_detect_brand_tabs_none_when_a_brand_matches_more_than_1_tab():
+    wb = workbook({"ANESSA 1": tab("ANESSA", [_ROW]), "ANESSA 2": tab("ANESSA", [_ROW]),
+                   "ELIXIR": tab("ELIXIR", [_ROW])})
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) is None     # mơ hồ -> None, fallback chọn tab kiểu cũ
+
+
+def test_detect_brand_tabs_none_when_tabs_dont_name_any_brand():
+    # cả 2 tab đều đọc được theo mapping nhưng tên tab không khớp brand nào trong group -> không phải kiểu
+    # "1 tab/brand", trả None để dùng lại choose_order_tab (chấm điểm theo tên/chiến dịch) như file 1 tab chung
+    wb = workbook({"ORDER 1": tab("ANESSA", [_ROW]), "ORDER 2": tab("ELIXIR", [_ROW])})
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) is None
 
 
 # ----------------------------------------------------------------------------- header
