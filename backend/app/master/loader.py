@@ -9,10 +9,13 @@ Tab và cột (dòng 1 là tiêu đề; so khớp không phân biệt hoa/thư�
 * **BRAND** — Kênh · Mã brand · Tên brand · Mã group · Tên group · Đang hợp tác
 * **HOP_DONG** — Số hợp đồng · Pháp nhân · Kênh (trống = mọi kênh) · Mã brand | Mã group · Mô hình ·
   % hoa hồng · Hiệu lực từ · Hiệu lực đến · Tên Bên A · MST · Địa chỉ · Điện thoại · Số tài khoản · Ngân hàng ·
-  Người đại diện · Chức vụ · Trạng thái · Thuế suất riêng (tuỳ chọn). Đổi % hoa hồng = thêm dòng mới với ngày
-  hiệu lực mới. "Thuế suất riêng" (tuỳ chọn, vd ``5%``) ghi đè thuế suất mặc định của pháp nhân (tab PHAP_NHAN)
-  CHO RIÊNG brand/hợp đồng này — dùng khi mức VAT/khấu trừ thuế (vd theo NQ 204/2025/QH15) khác nhau giữa các
-  brand cùng pháp nhân; để trống thì dùng thuế suất chung của pháp nhân như cũ.
+  Người đại diện · Chức vụ · Trạng thái · Thuế suất riêng (tuỳ chọn) · Số phụ lục HĐ (tuỳ chọn) · Ngày ký phụ lục
+  (tuỳ chọn). Đổi % hoa hồng = thêm dòng mới với ngày hiệu lực mới. "Thuế suất riêng" (tuỳ chọn, vd ``5%``) ghi
+  đè thuế suất mặc định của pháp nhân (tab PHAP_NHAN) CHO RIÊNG brand/hợp đồng này — dùng khi mức VAT/khấu trừ
+  thuế (vd theo NQ 204/2025/QH15) khác nhau giữa các brand cùng pháp nhân; để trống thì dùng thuế suất chung
+  của pháp nhân như cũ. "Số phụ lục HĐ" + "Ngày ký phụ lục" (tuỳ chọn, đi theo CẶP — điền thiếu 1 cột thì coi
+  như không có, bỏ qua) dùng khi hợp đồng có phụ lục (PLHD) bổ sung/điều chỉnh: BBNT sẽ ghi thêm "và Phụ lục
+  hợp đồng số ... ký ngày ..." sau câu "Căn cứ hợp đồng ... số {contract_no} ký ngày {Ngày ký}".
 * **MAPPING** — Mã mapping · Kênh · Tên tab · Dòng tiêu đề · Dòng dữ liệu đầu · Mặc định · Trường · Tên cột ·
   Cột · Bắt buộc. Mỗi trường 1 dòng; dòng ``STATUS_DELIVERED`` / ``STATUS_RETURNED`` / ``STATUS_CANCELLED``
   ghi các giá trị trạng thái (phân cách dấu phẩy) ở cột "Tên cột".
@@ -91,6 +94,8 @@ COLUMNS: dict[str, dict[str, tuple[str, ...]]] = {
         "a_title": ("Chức vụ",),
         "status": ("Trạng thái",),
         "tax_rate_override": ("Thuế suất riêng", "Thuế suất riêng (ghi đè)", "VAT/Khấu trừ riêng"),
+        "appendix_no": ("Số phụ lục HĐ", "Số phụ lục", "Số PLHD", "Phụ lục hợp đồng"),
+        "appendix_signed_on": ("Ngày ký phụ lục", "Ngày ký PLHD", "Ngày ký phụ lục HĐ", "Ngày ký phụ lục hợp đồng"),
     },
     "mappings": {
         "code": ("Mã mapping",),
@@ -375,6 +380,11 @@ def _parse_contracts(table: Sequence[Sequence[Any]], tab: str, issues: list[Mast
             tax_rate_override = (_percent(raw_override, "Thuế suất riêng") if not _blank(raw_override) else None)
             if tax_rate_override is not None and tax_rate_override >= 1:
                 raise _RowError("Thuế suất riêng phải nhỏ hơn 100%")
+            appendix_no = _text(r.get("appendix_no"))
+            appendix_signed = _date(r.get("appendix_signed_on"), "Ngày ký phụ lục")
+            if bool(appendix_no) != bool(appendix_signed):
+                warns.append("Có Số phụ lục HĐ hoặc Ngày ký phụ lục nhưng thiếu cột còn lại — bỏ qua phụ lục")
+                appendix_no, appendix_signed = None, None
             party = PartyA(
                 legal_name=_text(r.get("a_name")) or "",
                 address=_text(r.get("a_address")) or "",
@@ -392,7 +402,7 @@ def _parse_contracts(table: Sequence[Sequence[Any]], tab: str, issues: list[Mast
             continue
         issues.extend(MasterIssue(tab, rn, w, "WARNING") for w in warns)
         c = Contract(no, entity, channel, brand, group, model, rate, vf, vt, party, active, rn, signed,
-                     tax_rate_override)
+                     tax_rate_override, appendix_no, appendix_signed)
         clash = next((o for o in out if o.active and c.active and o.entity_code == c.entity_code
                       and o.channel == c.channel and o.brand_code == c.brand_code and o.group_code == c.group_code
                       and o.model == c.model and o.overlaps(c.valid_from, c.valid_to or date.max)), None)
