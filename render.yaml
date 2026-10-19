@@ -9,7 +9,7 @@ services:
     plan: free                    # 0.1 CPU, 512 MB RAM, 750 giờ/tháng cho cả workspace
     region: singapore             # không đổi được sau khi tạo
     rootDir: backend
-    dockerContext: .
+    dockerContext: .              # tương đối với rootDir (= thư mục backend)
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     autoDeployTrigger: checksPass # chỉ deploy khi GitHub Actions backend-ci xanh
