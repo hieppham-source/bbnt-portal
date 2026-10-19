@@ -14,13 +14,15 @@ import {
 } from "@/lib/api"
 import { monthToPeriod, pct, periodToMonth, previousMonth, vnd, vnDate } from "@/lib/format"
 
-import { handleAuthError, useIdToken } from "./useIdToken"
+import { handleAuthError, reconsent, useIdToken } from "./useIdToken"
 
 type Mode = "brand" | "group"
 type Shown = { message: string; code?: string; details?: unknown }
 type ContractChoice = { contract_no: string; scope?: string; channel?: string; valid_from?: string; valid_to?: string | null }
 
-const SHEET_RE = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[A-Za-z0-9_-]{20,}/
+// Google Sheet, hoặc file Excel (.xlsx) trên Drive (mở trên Sheets hay link drive.google.com/file/d/…)
+const SHEET_RE =
+  /^https:\/\/(docs\.google\.com\/spreadsheets\/d\/|drive\.google\.com\/(file\/d\/|open\?id=))[A-Za-z0-9_-]{20,}/
 
 export default function BbntForm() {
   const token = useIdToken()
@@ -41,6 +43,7 @@ export default function BbntForm() {
   const [monthInput, setMonthInput] = useState(previousMonth())
   const [campaign, setCampaign] = useState("")
   const [orderUrl, setOrderUrl] = useState("")
+  const [orderTab, setOrderTab] = useState("")
   const [mappingCode, setMappingCode] = useState("")
   const [collected, setCollected] = useState("")
   const [consulting, setConsulting] = useState("")
@@ -82,6 +85,7 @@ export default function BbntForm() {
     setPreview(null)
     setError(null)
     setDownloaded(null)
+    setOrderTab("")
   }
 
   const brandsInChannel = useMemo(
@@ -136,9 +140,9 @@ export default function BbntForm() {
   if (mixedGroups) problems.push("Gộp nhiều brand chỉ được khi cùng 1 group")
   if (months.length === 0) problems.push("Chọn ít nhất 1 tháng nghiệm thu")
   if (!campaign.trim()) problems.push("Nhập tên chương trình")
-  if (!SHEET_RE.test(orderUrl.trim())) problems.push("Dán link Google Sheet order (https://docs.google.com/spreadsheets/d/…)")
+  if (!SHEET_RE.test(orderUrl.trim())) problems.push("Dán link file order (Google Sheet hoặc file Excel trên Drive)")
 
-  function buildRequest(): BbntRequest {
+  function buildRequest(tab = orderTab): BbntRequest {
     return {
       channel,
       entity,
@@ -151,15 +155,16 @@ export default function BbntForm() {
       collected_on_behalf: Number(collected || 0),
       consulting_fee: Number(consulting || 0),
       strip_comments: stripComments,
+      ...(tab ? { order_tab: tab } : {}),
     }
   }
 
-  async function run(kind: "preview" | "generate") {
+  async function run(kind: "preview" | "generate", tab = orderTab) {
     if (!token || problems.length) return
     setBusy(kind)
     setError(null)
     try {
-      const req = buildRequest()
+      const req = buildRequest(tab)
       if (kind === "preview") {
         setPreview(await previewBbnt(token, req))
       } else {
@@ -171,6 +176,14 @@ export default function BbntForm() {
     } finally {
       setBusy(null)
     }
+  }
+
+  // Chọn tab khác trong file order -> tính lại ngay
+  function pickTab(tab: string) {
+    setOrderTab(tab)
+    setPreview(null)
+    setDownloaded(null)
+    void run("preview", tab)
   }
 
   function addMonth() {
@@ -293,13 +306,19 @@ export default function BbntForm() {
         </label>
 
         <label>
-          Link Google Sheet order
+          Link file order
           <input
             value={orderUrl}
-            onChange={(e) => touch(setOrderUrl)(e.target.value)}
-            placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0"
+            onChange={(e) => {
+              touch(setOrderUrl)(e.target.value)
+              setOrderTab("")
+            }}
+            placeholder="https://docs.google.com/spreadsheets/d/…  hoặc link file Excel trên Drive"
           />
-          <span className="hint">Tài khoản Google của bạn phải mở được Sheet này. Link có #gid=… thì tool đọc đúng tab đó.</span>
+          <span className="hint">
+            Google Sheet hoặc file Excel (.xlsx) trên Drive — tài khoản của bạn phải mở được file. File nhiều tab: tool tự
+            chọn tab theo tên brand / tên chương trình, sai thì đổi tab ở phần kết quả.
+          </span>
         </label>
 
         <details>
@@ -369,16 +388,18 @@ export default function BbntForm() {
       </section>
 
       <section className="result">
-        {error && <ErrorBox error={error} onPickContract={(no) => touch(setContractNo)(no)} />}
+        {error && (
+          <ErrorBox error={error} onPickContract={(no) => touch(setContractNo)(no)} onPickTab={pickTab} />
+        )}
         {downloaded && <p className="alert ok">Đã tải BBNT {downloaded}. Nhớ cất file vào thư mục Drive chung.</p>}
-        {preview ? <PreviewCard p={preview} /> : !error && <p className="muted">Điền form rồi bấm Xem trước để kiểm tra số liệu trước khi tải.</p>}
+        {preview ? <PreviewCard p={preview} onPickTab={pickTab} busy={!!busy} /> : !error && <p className="muted">Điền form rồi bấm Xem trước để kiểm tra số liệu trước khi tải.</p>}
       </section>
     </div>
   )
 }
 
 // =========================================================================== kết quả
-function PreviewCard({ p }: { p: PreviewOut }) {
+function PreviewCard({ p, onPickTab, busy }: { p: PreviewOut; onPickTab: (tab: string) => void; busy: boolean }) {
   const f = p.figures
   const byCode = p.warnings.reduce<Record<string, number>>((acc, w) => ((acc[w.code] = (acc[w.code] ?? 0) + 1), acc), {})
   return (
@@ -398,8 +419,36 @@ function PreviewCard({ p }: { p: PreviewOut }) {
             </td>
           </tr>
           <tr>
+            <th>Ngày ký HĐ</th>
+            <td>
+              {vnDate(p.contract.signed_on)}
+              {p.contract.signed_on_source !== "Ngày ký" && (
+                <span className="muted"> (lấy theo Hiệu lực từ — HOP_DONG chưa có cột Ngày ký)</span>
+              )}
+            </td>
+          </tr>
+          <tr>
             <th>Bên A</th>
             <td>{p.contract.party_a_name}</td>
+          </tr>
+          <tr>
+            <th>File order</th>
+            <td>
+              {p.order_tabs.length > 1 ? (
+                <select value={p.order_tab ?? ""} disabled={busy} onChange={(e) => onPickTab(e.target.value)}>
+                  {p.order_tabs.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>tab {p.order_tab}</>
+              )}{" "}
+              <span className="muted">
+                · {p.order_file_kind === "xlsx" ? "Excel trên Drive" : "Google Sheet"} · tiêu đề dòng {p.order_header_row}
+              </span>
+            </td>
           </tr>
           <tr>
             <th>Brand</th>
@@ -484,8 +533,16 @@ function IssueTable({ rows }: { rows: RowIssue[] }) {
   )
 }
 
-function ErrorBox({ error, onPickContract }: { error: Shown; onPickContract: (no: string) => void }) {
-  const d = error.details as { contracts?: ContractChoice[]; mappings?: string[] } | RowIssue[] | undefined
+function ErrorBox({
+  error,
+  onPickContract,
+  onPickTab,
+}: {
+  error: Shown
+  onPickContract: (no: string) => void
+  onPickTab: (tab: string) => void
+}) {
+  const d = error.details as { contracts?: ContractChoice[]; mappings?: string[]; tabs?: string[] } | RowIssue[] | undefined
   return (
     <div className="alert error">
       <strong>{error.message}</strong>
@@ -506,6 +563,27 @@ function ErrorBox({ error, onPickContract }: { error: Shown; onPickContract: (no
         </ul>
       )}
       {!Array.isArray(d) && d?.mappings && <p>Mapping: {d.mappings.join(", ")} — chọn ở Tuỳ chọn thêm.</p>}
+      {error.code === "GOOGLE_DRIVE_SCOPE_MISSING" && (
+        <p>
+          <button className="primary" onClick={reconsent}>
+            Đăng nhập lại & cấp quyền đọc Drive
+          </button>
+        </p>
+      )}
+      {!Array.isArray(d) && d?.tabs && d.tabs.length > 0 && (
+        <ul>
+          {d.tabs.map((t) => (
+            <li key={t}>
+              {t}{" "}
+              {error.code !== "MAPPING_MISMATCH" && (
+                <button className="link" onClick={() => onPickTab(t)}>
+                  Dùng tab này
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
