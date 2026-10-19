@@ -135,6 +135,27 @@ class TestLoader:
         assert any("Thuế suất riêng" in msg and "nhỏ hơn 100%" in msg for msg in msgs)
         assert "HD-BAD" not in by_no and "HD-100" not in by_no                  # 2 dòng lỗi bị bỏ qua
 
+    def test_contract_appendix_plhd(self, master_tables):
+        """Cột "Số phụ lục HĐ" + "Ngày ký phụ lục" (PLHD, tuỳ chọn, đi theo CẶP) — hợp đồng có phụ lục bổ sung/
+        điều chỉnh hợp đồng gốc. Thiếu 1 trong 2 -> coi như không có phụ lục (warning, không lỗi dòng)."""
+        t = master_tables
+        header(t, "HOP_DONG").append("Số phụ lục HĐ")
+        header(t, "HOP_DONG").append("Ngày ký phụ lục")
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-PLHD", "Số phụ lục HĐ": "PLHD-01",
+                                                  "Ngày ký phụ lục": "31/07/2026"}))
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-NO-PLHD"}))
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-PARTIAL", "Số phụ lục HĐ": "PLHD-02"}))
+        add_row(t, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-PARTIAL-2", "Ngày ký phụ lục": "01/01/2026"}))
+        m = build_master(t)
+        by_no = {c.contract_no: c for c in m.contracts}
+        assert by_no["HD-PLHD"].appendix_no == "PLHD-01"
+        assert by_no["HD-PLHD"].appendix_signed_on == date(2026, 7, 31)
+        assert by_no["HD-NO-PLHD"].appendix_no is None and by_no["HD-NO-PLHD"].appendix_signed_on is None
+        assert by_no["HD-PARTIAL"].appendix_no is None and by_no["HD-PARTIAL"].appendix_signed_on is None
+        assert by_no["HD-PARTIAL-2"].appendix_no is None and by_no["HD-PARTIAL-2"].appendix_signed_on is None
+        msgs = [msg for _, _, msg in messages(m, "HOP_DONG")]
+        assert sum("thiếu cột còn lại" in msg for msg in msgs) == 2
+
     def test_tax_periods_must_not_overlap(self, master_tables):
         add_row(master_tables, "PHAP_NHAN", **{"Mã pháp nhân": "EZS", "Mã số BBNT": "EZ", "Loại thuế": "Cộng VAT",
                                                "Thuế suất": "10%", "Hiệu lực từ": "01/12/2026"})
