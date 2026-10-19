@@ -184,41 +184,48 @@ class BbntGenerator:
 
     @staticmethod
     def _read_brand_tabs(book: OrderWorkbook, config: MappingConfig, mapping: OrderMapping, scope: Scope,
-                         brand_tabs: dict[str, str], months: tuple[YearMonth, ...],
+                         brand_tabs: dict[str, list[str]], months: tuple[YearMonth, ...],
                          ) -> tuple[ParseResult, list[OrderLine], int, list[BrandBreakdown]]:
-        """Đọc RIÊNG 1 tab cho mỗi brand (xem :func:`order_tabs.detect_brand_tabs`), gộp lại thành 1
-        ``ParseResult``/danh sách dòng chung (dùng tính NMV tổng + hoa hồng như cũ), đồng thời tính NMV
-        RIÊNG từng brand (:class:`BrandBreakdown`) để hiển thị từng khối trong file .docx. Brand trong group
-        không có tab trong file order kỳ này -> bỏ qua, không lỗi."""
+        """Đọc RIÊNG (1 hoặc nhiều) tab cho mỗi brand (xem :func:`order_tabs.detect_brand_tabs` — 1 brand có
+        thể tách nhiều tab theo loại sản phẩm, vd "BIO CORNER ORDER MIX"/"BIO CORNER ORDER FOOD" cùng 1 brand
+        thì gộp dòng lại), gộp tất cả lại thành 1 ``ParseResult``/danh sách dòng chung (dùng tính NMV tổng +
+        hoa hồng như cũ), đồng thời tính NMV RIÊNG từng brand (:class:`BrandBreakdown`, đã gộp mọi tab của
+        brand đó) để hiển thị từng khối trong file .docx. Brand trong group không có tab nào trong file order
+        kỳ này -> bỏ qua, không lỗi."""
         all_lines: list[OrderLine] = []
         all_issues: list[RowIssue] = []
         rows_read = 0
         header_row = 1
         other = 0
         breakdown: list[BrandBreakdown] = []
+        tried_tabs: list[str] = []
         for idx, brand in enumerate(scope.brands, start=1):
-            tab = brand_tabs.get(brand.code)
-            if tab is None:
+            tabs = brand_tabs.get(brand.code)
+            if not tabs:
                 continue
-            try:
-                parsed_b = parse_sheet(book.read(tab), config)
-            except MappingError as exc:
-                raise fail("MAPPING_MISMATCH", f"Tab '{tab}' (brand {brand.code}) không khớp mapping "
-                                               f"{mapping.code}: {exc}", details={"tabs": [tab]}) from exc
-            lines_b, other_b = _filter_brands(parsed_b, mapping, Scope(scope.channel, (brand,), None, None))
-            if not lines_b:
+            tried_tabs += tabs
+            brand_lines: list[OrderLine] = []
+            for tab in tabs:
+                try:
+                    parsed_b = parse_sheet(book.read(tab), config)
+                except MappingError as exc:
+                    raise fail("MAPPING_MISMATCH", f"Tab '{tab}' (brand {brand.code}) không khớp mapping "
+                                                   f"{mapping.code}: {exc}", details={"tabs": [tab]}) from exc
+                lines_b, other_b = _filter_brands(parsed_b, mapping, Scope(scope.channel, (brand,), None, None))
+                brand_lines += lines_b
+                all_issues += parsed_b.issues
+                rows_read += parsed_b.rows_read
+                header_row = parsed_b.header_row
+                other += other_b
+            if not brand_lines:
                 continue
-            tagged = [replace(ln, brand_name=ln.brand_name or brand.name) for ln in lines_b]
+            tagged = [replace(ln, brand_name=ln.brand_name or brand.name) for ln in brand_lines]
             all_lines += tagged
-            all_issues += parsed_b.issues
-            rows_read += parsed_b.rows_read
-            header_row = parsed_b.header_row
-            other += other_b
             brand_nmv = compute_nmv(tagged, months)
-            breakdown.append(BrandBreakdown(idx, brand.code, brand.name, tab, brand_nmv))
+            breakdown.append(BrandBreakdown(idx, brand.code, brand.name, tuple(tabs), brand_nmv))
         if not all_lines:
             raise fail("NO_DELIVERED_ORDERS", "Không brand nào trong group có đơn trong file order kỳ này "
-                                              f"(đã thử tab: {', '.join(brand_tabs.values())})")
+                                              f"(đã thử tab: {', '.join(tried_tabs)})")
         parsed = ParseResult(tuple(all_lines), tuple(sorted(all_issues, key=lambda i: i.row_number)),
                              rows_read, header_row)
         return parsed, all_lines, other, breakdown

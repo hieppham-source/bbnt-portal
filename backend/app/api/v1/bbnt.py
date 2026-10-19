@@ -104,7 +104,7 @@ def to_preview(r: BbntResult) -> PreviewResponse:
                        revenue=i.revenue) for i in r.nmv.items],
         brand_breakdown=[
             BrandBreakdownOut(
-                index=b.index, brand_code=b.brand_code, brand_name=b.brand_name, order_tab=b.order_tab,
+                index=b.index, brand_code=b.brand_code, brand_name=b.brand_name, order_tabs=list(b.order_tabs),
                 gmv_estimated=b.nmv.gmv_estimated.quantize(VND, ROUND_HALF_UP),
                 nmv=b.nmv.nmv.quantize(VND, ROUND_HALF_UP), cancellation_rate=b.nmv.cancellation_rate,
                 items=[ItemOut(brand_name=i.brand_name, sku=i.sku, product_name=i.product_name,

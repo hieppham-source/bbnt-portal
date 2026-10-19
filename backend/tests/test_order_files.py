@@ -126,14 +126,14 @@ def workbook(tabs: dict[str, list[list[Any]]]) -> OrderWorkbook:
 def test_detect_brand_tabs_matches_each_brand_to_its_own_tab():
     wb = workbook({"ANESSA": tab("ANESSA", [_ROW]), "ELIXIR": tab("ELIXIR", [_ROW]),
                    "DPROGRAM": tab("DPROGRAM", [_ROW])})
-    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) == {"ANESSA": "ANESSA", "ELIXIR": "ELIXIR",
-                                                            "DPROGRAM": "DPROGRAM"}
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) == {"ANESSA": ["ANESSA"], "ELIXIR": ["ELIXIR"],
+                                                            "DPROGRAM": ["DPROGRAM"]}
 
 
 def test_detect_brand_tabs_skips_brand_with_no_matching_tab():
     wb = workbook({"ANESSA": tab("ANESSA", [_ROW]), "ELIXIR": tab("ELIXIR", [_ROW])})
     # DPROGRAM không có tab nào trong file order kỳ này -> bỏ qua, KHÔNG lỗi, KHÔNG có trong map trả về
-    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) == {"ANESSA": "ANESSA", "ELIXIR": "ELIXIR"}
+    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) == {"ANESSA": ["ANESSA"], "ELIXIR": ["ELIXIR"]}
 
 
 def test_detect_brand_tabs_none_for_single_brand_scope():
@@ -147,10 +147,14 @@ def test_detect_brand_tabs_none_when_fewer_than_2_tabs_match_mapping():
     assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) is None
 
 
-def test_detect_brand_tabs_none_when_a_brand_matches_more_than_1_tab():
-    wb = workbook({"ANESSA 1": tab("ANESSA", [_ROW]), "ANESSA 2": tab("ANESSA", [_ROW]),
+def test_detect_brand_tabs_merges_multiple_tabs_of_the_same_brand():
+    """1 brand tách nhiều tab theo loại sản phẩm (vd "BIO CORNER ORDER MIX" + "BIO CORNER ORDER FOOD" đều là
+    brand BIO CORNER) -> gộp cả 2 tab vào danh sách của brand đó, KHÔNG coi là mơ hồ."""
+    wb = workbook({"ANESSA MIX": tab("ANESSA", [_ROW]), "ANESSA FOOD": tab("ANESSA", [_ROW]),
                    "ELIXIR": tab("ELIXIR", [_ROW])})
-    assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) is None     # mơ hồ -> None, fallback chọn tab kiểu cũ
+    result = detect_brand_tabs(wb, CFG, scope=KOSE_GROUP)
+    assert result is not None
+    assert set(result["ANESSA"]) == {"ANESSA MIX", "ANESSA FOOD"} and result["ELIXIR"] == ["ELIXIR"]
 
 
 def test_detect_brand_tabs_none_when_tabs_dont_name_any_brand():
@@ -158,6 +162,17 @@ def test_detect_brand_tabs_none_when_tabs_dont_name_any_brand():
     # "1 tab/brand", trả None để dùng lại choose_order_tab (chấm điểm theo tên/chiến dịch) như file 1 tab chung
     wb = workbook({"ORDER 1": tab("ANESSA", [_ROW]), "ORDER 2": tab("ELIXIR", [_ROW])})
     assert detect_brand_tabs(wb, CFG, scope=KOSE_GROUP) is None
+
+
+def test_detect_brand_tabs_ignores_tab_whose_name_matches_2_brands():
+    # tên tab khớp CẢ 2 brand (vd "ANESSA ELIXIR ORDER") -> mơ hồ cho riêng tab đó, bỏ qua không tính candidate
+    # của brand nào — ELIXIR vẫn còn 1 tab riêng khớp rõ nên vẫn đủ điều kiện phát hiện (ANESSA bị bỏ qua)
+    wb = workbook({"ANESSA ELIXIR ORDER": tab("ANESSA", [_ROW]), "ELIXIR ORDER 2": tab("ELIXIR", [_ROW]),
+                   "DPROGRAM": tab("DPROGRAM", [_ROW])})
+    result = detect_brand_tabs(wb, CFG, scope=KOSE_GROUP)
+    assert result is not None
+    assert "ANESSA" not in result
+    assert result["ELIXIR"] == ["ELIXIR ORDER 2"] and result["DPROGRAM"] == ["DPROGRAM"]
 
 
 # ----------------------------------------------------------------------------- header

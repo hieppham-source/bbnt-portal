@@ -59,12 +59,12 @@ def test_brand_breakdown_computed_per_brand_commission_on_combined_total(env):
     breakdown = {x["brand_code"]: x for x in b["brand_breakdown"]}
     assert set(breakdown) == {"SHISEIDO", "ANESSA"}
     sh, an = breakdown["SHISEIDO"], breakdown["ANESSA"]
-    assert sh["index"] == 1 and sh["order_tab"] == "SHISEIDO"
+    assert sh["index"] == 1 and sh["order_tabs"] == ["SHISEIDO"]
     assert Decimal(sh["gmv_estimated"]) == 10_000_000 and Decimal(sh["nmv"]) == 10_000_000
     assert sh["cancellation_rate"] is None or Decimal(sh["cancellation_rate"]) == 0
     assert [i["product_name"] for i in sh["items"]] == ["Ultimune"]
 
-    assert an["index"] == 2 and an["order_tab"] == "ANESSA"
+    assert an["index"] == 2 and an["order_tabs"] == ["ANESSA"]
     # "Trả hàng" bị loại khỏi NMV nhưng vẫn tính vào GMV ước tính
     assert Decimal(an["gmv_estimated"]) == 6_000_000 and Decimal(an["nmv"]) == 5_000_000
     assert round(Decimal(an["cancellation_rate"]), 6) == round(Decimal(1) - Decimal(5) / Decimal(6), 6)
@@ -111,6 +111,33 @@ def test_generate_fills_separate_brand_sections_in_docx(env):
     assert names(product_tables[2]) == ["Ultimune", "Anessa Gold"]      # TỔNG gộp cả 2 brand
     # hoa hồng vẫn tính trên TỔNG, không phải riêng brand
     assert text.count("2.250.000") >= 1
+
+
+def test_brand_with_multiple_tabs_merged_into_one_brand_block(env):
+    """Tái hiện đúng ca thực tế: group 2 brand, 1 brand (ANESSA) tách nhiều tab theo loại sản phẩm (như
+    "BIO CORNER ORDER MIX" + "BIO CORNER ORDER FOOD" cùng 1 brand BIO CORNER) — phải gộp dòng của mọi tab
+    đó vào CHUNG 1 khối/1 NMV cho brand này, không báo ORDER_TAB_AMBIGUOUS."""
+    anessa_mix = order_rows([["05/08/2026", "S002", "Đã giao", "Anessa", "ANS-01", "Anessa Gold", 5, 5_000_000]])
+    anessa_food = order_rows([["05/09/2026", "S003", "Trả hàng", "Anessa", "ANS-01", "Anessa Gold", 1, 1_000_000]])
+    put(env, {"SHISEIDO": SHISEIDO_TAB, "ANESSA ORDER MIX": anessa_mix, "ANESSA ORDER FOOD": anessa_food})
+    r = env.post("/api/v1/bbnt/preview", GROUP)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert Decimal(b["figures"]["nmv"]) == 15_000_000            # giống hệt ca ANESSA 1 tab duy nhất
+    assert Decimal(b["figures"]["commission_amount"]) == 2_250_000
+
+    breakdown = {x["brand_code"]: x for x in b["brand_breakdown"]}
+    assert set(breakdown) == {"SHISEIDO", "ANESSA"}
+    an = breakdown["ANESSA"]
+    assert set(an["order_tabs"]) == {"ANESSA ORDER MIX", "ANESSA ORDER FOOD"}
+    assert Decimal(an["gmv_estimated"]) == 6_000_000 and Decimal(an["nmv"]) == 5_000_000
+    # 1 brand = 1 khối duy nhất trong .docx dù gộp từ 2 tab — không tách thành 2 khối "ANESSA"
+    assert [i["product_name"] for i in an["items"]] == ["Anessa Gold"]
+
+    r2 = env.post("/api/v1/bbnt/generate", GROUP)
+    assert r2.status_code == 200, r2.text
+    text = docx_text(r2.content)
+    assert text.count("1. Shiseido") + text.count("2. Anessa") == 2       # đúng 2 khối brand, không phải 3
 
 
 def test_single_tab_group_file_still_falls_back_to_old_behavior(env):

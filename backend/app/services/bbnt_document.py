@@ -19,14 +19,15 @@ _HONORIFIC = re.compile(r"^(ông|bà|anh|chị|mr\.?|mrs\.?|ms\.?)\s+", re.IGNOR
 
 @dataclass(frozen=True)
 class BrandBreakdown:
-    """NMV riêng của 1 brand trong group (link order kiểu "1 tab/brand" — xem
-    :func:`app.services.order_tabs.detect_brand_tabs`). Không giữ ``Brand`` trực tiếp (tránh vòng import
-    ``app.master.models`` <-> module này) — chỉ giữ mã/tên đã tra sẵn."""
+    """NMV riêng của 1 brand trong group (link order kiểu "1 (hoặc nhiều) tab/brand" — xem
+    :func:`app.services.order_tabs.detect_brand_tabs`; ``order_tabs`` có > 1 phần tử khi brand đó tách
+    nhiều tab theo loại sản phẩm, vd "BIO CORNER ORDER MIX" + "BIO CORNER ORDER FOOD"). Không giữ ``Brand``
+    trực tiếp (tránh vòng import ``app.master.models`` <-> module này) — chỉ giữ mã/tên đã tra sẵn."""
 
     index: int
     brand_code: str
     brand_name: str
-    order_tab: str
+    order_tabs: tuple[str, ...]
     nmv: NmvResult
 
 

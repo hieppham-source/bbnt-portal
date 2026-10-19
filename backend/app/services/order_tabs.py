@@ -69,14 +69,16 @@ def score_tab(title: str, *, scope: Scope, campaign: str, months: Sequence[YearM
     return score
 
 
-def detect_brand_tabs(book: OrderWorkbook, config: MappingConfig, *, scope: Scope) -> dict[str, str] | None:
-    """Phát hiện link order kiểu "1 tab riêng cho mỗi brand trong group" (vd group KOSE: tab ANESSA /
-    ELIXIR / DPROGRAM) — khác với file 1 tab dùng chung nhiều brand qua cột BRAND_NAME (đã xử lý ở
-    :func:`app.services.generator._filter_brands`).
+def detect_brand_tabs(book: OrderWorkbook, config: MappingConfig, *, scope: Scope) -> dict[str, list[str]] | None:
+    """Phát hiện link order kiểu "1 (hoặc nhiều) tab riêng cho mỗi brand trong group" (vd group KOSE: tab
+    ANESSA / ELIXIR / DPROGRAM; hay 1 brand tách nhiều tab theo loại sản phẩm — "BIO CORNER ORDER MIX" +
+    "BIO CORNER ORDER FOOD" đều là brand BIO CORNER, gộp lại) — khác với file 1 tab dùng chung nhiều brand
+    qua cột BRAND_NAME (đã xử lý ở :func:`app.services.generator._filter_brands`).
 
-    Trả về map ``mã brand -> tên tab`` CHỈ KHI khớp được RÕ RÀNG >= 2 brand khác nhau, mỗi brand khớp tên
-    với ĐÚNG 1 tab (không trùng tab với brand khác, không có brand nào khớp > 1 tab) — để an toàn, mọi
-    trường hợp mơ hồ trả về ``None`` và gọi lại :func:`choose_order_tab` kiểu cũ (1 tab chung cho cả scope).
+    Trả về map ``mã brand -> danh sách tên tab (gộp nếu brand đó khớp nhiều tab)`` CHỈ KHI khớp được RÕ RÀNG
+    >= 2 brand khác nhau, mỗi tab khớp tên với ĐÚNG 1 brand (không có tab nào khớp tên > 1 brand — tab đó coi
+    như mơ hồ, bỏ qua không tính candidate của brand nào) — để an toàn, mọi trường hợp mơ hồ (< 2 brand khớp
+    được tab) trả về ``None`` và gọi lại :func:`choose_order_tab` kiểu cũ (1 tab chung cho cả scope).
     Brand trong group không khớp tab nào -> coi như không phát sinh đơn kỳ này (không lỗi, không có trong map).
     """
     if not scope.is_group or len(scope.brands) < 2:
@@ -96,9 +98,9 @@ def detect_brand_tabs(book: OrderWorkbook, config: MappingConfig, *, scope: Scop
         matched = [b.code for b in scope.brands if any(_contains_term(tab, t) for t in (b.code, b.name) if t)]
         if len(matched) == 1:
             by_brand.setdefault(matched[0], []).append(tab)
-    if len(by_brand) < 2 or any(len(tabs) > 1 for tabs in by_brand.values()):
+    if len(by_brand) < 2:
         return None
-    return {code: tabs[0] for code, tabs in by_brand.items()}
+    return by_brand
 
 
 def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code: str, scope: Scope,

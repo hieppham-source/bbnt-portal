@@ -135,13 +135,14 @@ class ItemOut(BaseModel):
 
 
 class BrandBreakdownOut(BaseModel):
-    """NMV riêng 1 brand trong group — chỉ có khi link order kiểu "1 tab/brand" (xem
-    ``detect_brand_tabs``); commission vẫn tính trên tổng (``figures``), không tính riêng theo brand."""
+    """NMV riêng 1 brand trong group — chỉ có khi link order kiểu "1 (hoặc nhiều) tab/brand" (xem
+    ``detect_brand_tabs``; ``order_tabs`` > 1 phần tử khi brand đó tách nhiều tab theo loại sản phẩm);
+    commission vẫn tính trên tổng (``figures``), không tính riêng theo brand."""
 
     index: int
     brand_code: str
     brand_name: str
-    order_tab: str
+    order_tabs: list[str]
     gmv_estimated: Decimal
     nmv: Decimal
     cancellation_rate: Decimal | None
