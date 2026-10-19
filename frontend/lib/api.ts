@@ -16,6 +16,7 @@ export type BbntRequest = {
   collected_on_behalf?: number
   consulting_fee?: number
   strip_comments?: boolean
+  order_tab?: string // tab trong file order — bỏ trống để tự chọn
 }
 
 export type MasterOut = {
@@ -73,6 +74,8 @@ export type PreviewOut = {
     commission_rate: string
     valid_from: string
     valid_to: string | null
+    signed_on: string
+    signed_on_source: string
     party_a_name: string
     master_row: number
   }
@@ -95,6 +98,10 @@ export type PreviewOut = {
   items: { brand_name: string | null; sku: string | null; product_name: string; quantity: number; revenue: string }[]
   order_line_count: number
   other_brand_line_count: number
+  order_tab: string | null
+  order_tabs: string[]
+  order_file_kind: "google_sheet" | "xlsx"
+  order_header_row: number
   warning_count: number
   warnings: RowIssue[]
 }
