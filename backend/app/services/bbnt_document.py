@@ -57,9 +57,19 @@ def signature_name(representative: str) -> str:
     return _HONORIFIC.sub("", representative.strip()).upper()
 
 
-def contract_signed_text(signed_on: date) -> str:
-    """'ký ngày 01 tháng 08 năm 2025' — thay cụm 'ký ngày XX tháng XX năm 20XX' của template."""
-    return f"ký ngày {signed_on:%d} tháng {signed_on:%m} năm {signed_on:%Y}"
+def contract_signed_text(signed_on: date, *, appendix_no: str | None = None,
+                         appendix_signed_on: date | None = None) -> str:
+    """'ký ngày 01 tháng 08 năm 2025' — thay cụm 'ký ngày XX tháng XX năm 20XX' của template.
+
+    Có phụ lục hợp đồng (PLHD — cả ``appendix_no`` lẫn ``appendix_signed_on`` đều có, xem
+    :class:`app.master.models.Contract`) -> nối thêm "và Phụ lục hợp đồng số ... ký ngày ..." ngay sau, cho ra
+    câu đầy đủ kiểu "ký ngày 01 tháng 08 năm 2025 và Phụ lục hợp đồng số PLHD-01 ký ngày 31 tháng 07 năm 2026".
+    Thiếu 1 trong 2 (đã lọc ở bước đọc master) -> coi như không có phụ lục, giữ nguyên câu cũ."""
+    text = f"ký ngày {signed_on:%d} tháng {signed_on:%m} năm {signed_on:%Y}"
+    if appendix_no and appendix_signed_on:
+        text += (f" và Phụ lục hợp đồng số {appendix_no} ký ngày {appendix_signed_on:%d} tháng "
+                 f"{appendix_signed_on:%m} năm {appendix_signed_on:%Y}")
+    return text
 
 
 def build_render_context(
@@ -68,6 +78,8 @@ def build_render_context(
     program: str,
     contract_no: str,
     contract_signed_on: date,
+    appendix_no: str | None = None,
+    appendix_signed_on: date | None = None,
     party_a: PartyA,
     gmv_estimated: Decimal,
     nmv: Decimal,
@@ -84,7 +96,8 @@ def build_render_context(
         "bbnt_number": str(number),
         "program_name": program,
         "contract_no": contract_no,
-        "contract_signed": contract_signed_text(contract_signed_on),
+        "contract_signed": contract_signed_text(contract_signed_on, appendix_no=appendix_no,
+                                                appendix_signed_on=appendix_signed_on),
         "period_label": number.period_label,                 # mm.yy
         "issue_month": number.issue_month.label,             # mm.yy — tháng nghiệp vụ, KHÔNG phải ngày lập pháp lý
         "party_a_name": party_a.legal_name,
