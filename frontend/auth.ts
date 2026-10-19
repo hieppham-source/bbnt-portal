@@ -10,11 +10,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // access_type=offline + prompt=consent -> Google cấp refresh token để làm mới token (hết hạn sau 1 giờ).
         // spreadsheets.readonly: backend đọc Sheet master + file order bằng quyền của chính người dùng
         // (không cần service account) — ai mở được Sheet nào trên Drive thì tool đọc được Sheet đó.
+        // drive.readonly: đọc file order brand gửi dạng Excel (.xlsx) trên Drive mà không phải chuyển sang Sheet.
         params: {
           hd: DOMAIN,
           access_type: "offline",
           prompt: "consent",
-          scope: "openid email profile https://www.googleapis.com/auth/spreadsheets.readonly",
+          scope:
+            "openid email profile https://www.googleapis.com/auth/spreadsheets.readonly " +
+            "https://www.googleapis.com/auth/drive.readonly",
         },
       },
     }),
