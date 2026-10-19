@@ -17,6 +17,11 @@ export function useIdToken(): Tokens | undefined {
   return useMemo(() => (idToken ? { idToken, accessToken } : undefined), [idToken, accessToken])
 }
 
+/** Cấp thêm quyền Google (vd đọc Drive cho file .xlsx): đăng nhập lại, Google hỏi quyền mới. */
+export function reconsent(): void {
+  void signIn("google", undefined, { prompt: "consent" })
+}
+
 /** Backend trả 401 (token hết hạn / sai) -> đăng nhập lại. Riêng GOOGLE_SCOPE_MISSING (người dùng bỏ tích
  *  quyền Google Sheets lúc đăng nhập) thì hiện lỗi thay vì đăng nhập lại liên tục. */
 export function handleAuthError(status: number, code?: string): boolean {
