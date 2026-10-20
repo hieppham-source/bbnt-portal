@@ -3,6 +3,18 @@ const API = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "")
 
 export type Channel = string
 
+// "auto" (mặc định, hành vi cũ) | "combine" (gộp mọi tab/camp ứng viên thành 1 BBNT) | "split" (mỗi tab 1 BBNT
+// riêng — chỉ hợp lệ qua previewBbntSplit, bắt buộc kèm tab_campaign_names)
+export type TabMode = "auto" | "combine" | "split"
+
+// "brand" (tách bảng doanh thu/huỷ theo brand, commission chung) | "camp" (tách theo camp/đợt chạy, bắt buộc
+// kèm camp_names) — CHỈ dùng khi nghiệm thu group/nhiều brand cùng lúc, không dùng cùng order_tab/tab_mode khác "auto"
+export type BreakdownMode = "brand" | "camp"
+
+// 1 camp = 1 tab trong 1 link order cụ thể. link_index: 0 = order_sheet_url chính, 1.. = vị trí (1-based)
+// trong extra_order_sheet_urls (tên tab có thể trùng giữa 2 link nên cần cả link_index lẫn tab).
+export type CampLabel = { link_index: number; tab: string; name: string }
+
 export type BbntRequest = {
   channel: Channel
   entity: string
@@ -12,11 +24,27 @@ export type BbntRequest = {
   period_months: string[] // ["05.26"] hoặc ["07.26","08.26","09.26"]
   campaign_name: string
   order_sheet_url: string
+  extra_order_sheet_urls?: string[] // link order BỔ SUNG để gộp chung 1 BBNT
   mapping_code?: string
   collected_on_behalf?: number
   consulting_fee?: number
   strip_comments?: boolean
   order_tab?: string // tab trong file order — bỏ trống để tự chọn
+  tab_mode?: TabMode
+  tab_campaign_names?: Record<string, string> // bắt buộc khi tab_mode === "split": {tên tab: tên chương trình riêng}
+  breakdown_mode?: BreakdownMode
+  camp_names?: CampLabel[] // bắt buộc khi breakdown_mode === "camp"
+}
+
+export type BrandBreakdownOut = {
+  index: number
+  brand_code: string | null // null khi breakdown_kind === "camp" (brand_name khi đó là tên camp)
+  brand_name: string
+  order_tabs: string[]
+  gmv_estimated: string
+  nmv: string
+  cancellation_rate: string | null
+  items: { brand_name: string | null; sku: string | null; product_name: string; quantity: number; revenue: string }[]
 }
 
 export type MasterOut = {
@@ -63,6 +91,7 @@ export type PreviewOut = {
   issue_date: string
   period_label: string
   program_name: string
+  campaign_name: string
   scope_code: string
   brands: string[]
   mapping_code: string
@@ -96,10 +125,17 @@ export type PreviewOut = {
     total_payable_words: string
   }
   items: { brand_name: string | null; sku: string | null; product_name: string; quantity: number; revenue: string }[]
+  // "none" (không tách bảng) | "brand" | "camp" — chiều tách của brand_breakdown (xem BbntRequest.breakdown_mode;
+  // "brand" cũng dùng cho link tự nhận diện "1 tab/brand" dù không chọn breakdown_mode)
+  breakdown_kind: "none" | "brand" | "camp"
+  brand_breakdown: BrandBreakdownOut[]
   order_line_count: number
   other_brand_line_count: number
   order_tab: string | null
   order_tabs: string[]
+  // Tên các tab đã GỘP lại thành BBNT này (tab_mode === "combine" và/hoặc nhiều order_sheet_url, >= 2 tab) —
+  // rỗng khi không gộp.
+  order_tabs_combined: string[]
   order_file_kind: "google_sheet" | "xlsx"
   order_header_row: number
   warning_count: number
@@ -155,6 +191,18 @@ export const checkMaster = (t: Tokens): Promise<MasterCheckOut> =>
 
 export const previewBbnt = (t: Tokens, body: BbntRequest, refresh = false): Promise<PreviewOut> =>
   call(t, `/api/v1/bbnt/preview${refresh ? "?refresh=true" : ""}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }).then((r) => r.json())
+
+export type SplitPreviewOut = { results: PreviewOut[] }
+
+/** tab_mode: "split" — mỗi tab/camp ứng viên trong file order xem trước thành 1 BBNT riêng (bắt buộc kèm
+ * tab_campaign_names, khác tên nhau từng tab — số BBNT không phân biệt theo tên chương trình nên mỗi kết quả
+ * tự có hậu tố -R{n}). Chỉ dùng cho xem trước — tải file gọi lại generateBbnt với order_tab + campaign_name
+ * của 1 trong các kết quả trả về. */
+export const previewBbntSplit = (t: Tokens, body: BbntRequest, refresh = false): Promise<SplitPreviewOut> =>
+  call(t, `/api/v1/bbnt/preview-split${refresh ? "?refresh=true" : ""}`, {
     method: "POST",
     body: JSON.stringify(body),
   }).then((r) => r.json())
