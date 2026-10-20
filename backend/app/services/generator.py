@@ -16,6 +16,11 @@ Cần làm lại -> dán lại link order. Cần sửa câu chữ -> người l�
 có trong link (không lọc theo tháng nữa). ``inp.contract_no`` vì vậy cũng LUÔN bắt buộc — hợp đồng/% hoa hồng
 áp dụng do người làm tự chọn (không còn tự suy luận theo kỳ nghiệm thu).
 
+``inp.manual_contract`` (mặc định ``False``): hợp đồng CHƯA kịp cập nhật vào Sheet master — bỏ qua tra cứu,
+dùng thẳng ``contract_no`` người làm tự gõ; Bên A/% hoa hồng/VAT/ngày ký đều để PLACEHOLDER (hoa hồng/VAT tính
+ra = 0) — người làm PHẢI tự điền tay trên file .docx đã tải trước khi dùng để thanh toán (xem
+:func:`_manual_contract`).
+
 ``inp.tab_mode`` (khi file order có NHIỀU tab/camp — vd nhiều đợt chạy campaign khác nhau cùng 1 brand/scope —
 KHÁC với "1 tab/brand" của :func:`app.services.order_tabs.detect_brand_tabs`, vốn luôn tự gộp, không cần
 chọn):
@@ -47,7 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
@@ -74,7 +79,7 @@ from app.docx.vn_text import format_percent
 from app.errors import fail
 from app.master.index import Scope, find_contract, find_mapping, resolve_scope
 from app.master.models import Contract, Entity, MasterData, OrderMapping
-from app.services.bbnt_document import BrandBreakdown, build_render_context, program_name
+from app.services.bbnt_document import BrandBreakdown, PartyA, build_render_context, program_name
 from app.services.order_tabs import TabChoice, choose_order_tab, detect_brand_tabs, list_candidate_tabs
 from app.services.sheets import OrderWorkbook
 from app.services.templates import TemplateRegistry
@@ -132,6 +137,32 @@ class BbntInput:
     breakdown_mode: str | None = None
     #: Bắt buộc khi ``breakdown_mode == "camp"``: tên camp riêng cho từng (link, tab).
     camp_names: Sequence[CampLabel] | None = None
+    #: Hợp đồng CHƯA có trong Sheet master (chưa kịp cập nhật tab HOP_DONG) — bỏ qua tra cứu, dùng thẳng
+    #: ``contract_no`` người làm tự gõ, mọi giá trị khác (Bên A, % hoa hồng, VAT, ngày ký) để PLACEHOLDER rõ
+    #: ràng là chưa điền (hoa hồng/VAT tính ra = 0) — người làm PHẢI tự sửa tay trên file .docx đã tải trước khi
+    #: dùng để thanh toán. Xem :func:`_manual_contract`.
+    manual_contract: bool = False
+
+
+#: ``BbntInput.manual_contract`` — mọi giá trị Bên A để placeholder RÕ RÀNG là chưa điền (không phải chuỗi
+#: rỗng, để không bị nhầm là ô trống bình thường trong file .docx) — người làm tự gõ đè khi sửa tay.
+_MANUAL_PLACEHOLDER = "(Tự điền sau khi tải BBNT)"
+_MANUAL_PARTY_A = PartyA(
+    legal_name=_MANUAL_PLACEHOLDER, address=_MANUAL_PLACEHOLDER, phone=_MANUAL_PLACEHOLDER,
+    tax_code=_MANUAL_PLACEHOLDER, bank_account_no=_MANUAL_PLACEHOLDER, bank_name=_MANUAL_PLACEHOLDER,
+    representative_name=_MANUAL_PLACEHOLDER, representative_title=_MANUAL_PLACEHOLDER)
+
+
+def _manual_contract(entity_code: str, scope: Scope, contract_no: str, issue_date: date) -> Contract:
+    """``BbntInput.manual_contract``: hợp đồng CHƯA có trong Sheet master — bỏ qua :func:`find_contract`, dùng
+    thẳng ``contract_no`` người làm tự gõ. Model luôn ``"NON_OP"`` (template duy nhất có sẵn cho mỗi pháp nhân
+    hiện nay — xem ``app.services.templates.DEFAULT_TEMPLATES``); % hoa hồng = 0 (hoa hồng/VAT tính ra = 0,
+    KHÔNG dùng để thanh toán); Bên A = placeholder; ngày ký = ngày lập BBNT (chỉ để có 1 ngày hợp lệ điền vào
+    câu "ký ngày ..." — người làm tự sửa lại cho đúng). Không ghi gì vào Sheet master."""
+    return Contract(contract_no=contract_no, entity_code=entity_code, channel=scope.channel,
+                     brand_code=None if scope.is_group else scope.brands[0].code, group_code=scope.group_code,
+                     model="NON_OP", commission_rate=Decimal(0), valid_from=issue_date, valid_to=None,
+                     party_a=_MANUAL_PARTY_A, active=True, row=0, signed_on=issue_date)
 
 
 @dataclass
@@ -164,6 +195,9 @@ class BbntResult:
     #: "none" (không tách bảng) | "brand" | "camp" — chiều tách của ``brand_breakdown`` (xem
     #: ``BbntInput.breakdown_mode``; "brand" cũng áp dụng cho link tự nhận diện "1 tab/brand" như trước đây).
     breakdown_kind: Literal["none", "brand", "camp"] = "none"
+    #: ``BbntInput.manual_contract`` — ``True`` thì ``contract`` ở trên là PLACEHOLDER (Bên A/hoa hồng/VAT/ngày
+    #: ký đều chưa điền, hoa hồng/VAT = 0), KHÔNG dùng để thanh toán nếu chưa sửa tay trên file .docx đã tải.
+    manual_contract: bool = False
 
     @property
     def warnings(self) -> list[RowIssue]:
@@ -250,7 +284,8 @@ class BbntGenerator:
         scope = resolve_scope(master, channel, inp.brand_codes, inp.group_code)
         number = self._number(entity, scope, inp.bbnt_suffix, issued_at, revision_no)
         assert number.issue_date is not None
-        contract = find_contract(master, entity_code, scope, inp.contract_no)
+        contract = (_manual_contract(entity_code, scope, inp.contract_no, number.issue_date)
+                   if inp.manual_contract else find_contract(master, entity_code, scope, inp.contract_no))
         tax = entity.tax_on(number.issue_date)
         if tax is None:
             raise fail("TAX_RULE_MISSING", f"Tab PHAP_NHAN chưa có thuế của {entity_code} hiệu lực ngày "
@@ -355,7 +390,8 @@ class BbntGenerator:
         result = BbntResult(number, entity, scope, contract, mapping, tax, parsed, lines, other, nmv,
                             gmv_vnd, nmv_vnd, commission, program, choice, books[0].kind, values,
                             brand_breakdown=brand_breakdown, combined_tabs=combined_tabs,
-                            campaign_name=inp.campaign_name.strip(), breakdown_kind=breakdown_kind)
+                            campaign_name=inp.campaign_name.strip(), breakdown_kind=breakdown_kind,
+                            manual_contract=inp.manual_contract)
         if renderer is not None:
             try:
                 brands = [BrandBlock(b["values"], b["items"]) for b in brand_blocks]
