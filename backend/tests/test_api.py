@@ -141,6 +141,46 @@ def test_contract_appendix_renders_plhd_clause(env):
             "31 tháng 07 năm 2026") in text
 
 
+# =========================================================================== hợp đồng tự điền (manual_contract)
+def test_manual_contract_skips_lookup_and_zeroes_commission(env):
+    """``manual_contract=True`` -> bỏ qua tra cứu Sheet master (``contract_no`` không cần có trong tab HOP_DONG),
+    dùng thẳng số hợp đồng tự gõ; Bên A/% hoa hồng/ngày ký đều để PLACEHOLDER RÕ RÀNG, hoa hồng/VAT/khấu trừ/tổng
+    thanh toán đều tính ra 0 — người làm PHẢI tự điền tay + tự tính tiền trên file .docx đã tải."""
+    payload = {**ORGANICA, "contract_no": "CHƯA CÓ TRONG HỆ THỐNG", "manual_contract": True}
+    r = env.post("/api/v1/bbnt/preview", payload)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["manual_contract"] is True
+    assert b["bbnt_number"] == "06.26/BBNT-ORGANICA-EZ-FB-05"           # số BBNT không phụ thuộc hợp đồng
+    assert b["contract"]["contract_no"] == "CHƯA CÓ TRONG HỆ THỐNG"
+    assert b["contract"]["party_a_name"] == "(Tự điền sau khi tải BBNT)"
+    assert b["contract"]["commission_rate"] == "0"
+    assert b["contract"]["signed_on"] == b["issue_date"]                # ngày ký = ngày lập BBNT (placeholder)
+    f = b["figures"]
+    assert Decimal(f["commission_amount"]) == 0 and Decimal(f["vat_amount"]) == 0
+    assert Decimal(f["tax_deduction_amount"]) == 0 and Decimal(f["total_payable"]) == 0
+    assert Decimal(f["nmv"]) == 4_200_000                               # NMV vẫn tính bình thường từ đơn hàng
+
+    r2 = env.post("/api/v1/bbnt/generate", payload)
+    assert r2.status_code == 200, r2.text                               # không bị MissingValueError
+    text = docx_text(r2.content)
+    assert "(Tự điền sau khi tải BBNT)" in text
+    assert "CHƯA CÓ TRONG HỆ THỐNG" in text
+    assert "{{" not in text
+
+
+def test_manual_contract_group_scope_has_no_brand_code(env):
+    """Nghiệm thu nhiều brand cùng group (``scope.is_group``) với ``manual_contract=True`` -> hợp đồng placeholder
+    không gắn riêng 1 brand nào (``brand_code=None``), chỉ gắn group — khớp quy tắc hợp đồng gộp group bình
+    thường trong :func:`app.master.index.find_contract`."""
+    payload = {**SHISEIDO, "manual_contract": True}
+    b = env.post("/api/v1/bbnt/preview", payload).json()
+    assert b["manual_contract"] is True
+    assert b["contract"]["contract_no"] == SHISEIDO["contract_no"]
+    assert Decimal(b["figures"]["total_payable"]) == 0
+    assert b["brands"] == ["SHISEIDO", "ANESSA"]                        # scope/brand vẫn tách đúng như thường
+
+
 # =========================================================================== nhiều link order (extra_order_sheet_urls)
 SECOND_ORDER_URL = "https://docs.google.com/spreadsheets/d/1OrderFbSecondAbCdEfGhIjKlMnOp/edit"
 
