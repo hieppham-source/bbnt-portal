@@ -35,5 +35,5 @@ services:
         sync: false
       - key: GOOGLE_OAUTH_CLIENT_ID
         sync: false
-      - key: CORS_ALLOWED_ORIGINS     # vd https://bbnt-portal.netlify.app
+      - key: CORS_ALLOWED_ORIGINS     # vd https://bbnt-portal-frontend.<account>.workers.dev (hoặc domain riêng)
         sync: false
