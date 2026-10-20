@@ -124,7 +124,7 @@ def to_preview(r: BbntResult) -> PreviewResponse:
             total_payable_words=amount_in_words(c.total_payable)),
         items=[ItemOut(brand_name=i.brand_name, sku=i.sku, product_name=i.product_name, quantity=i.quantity,
                        revenue=i.revenue) for i in r.nmv.items],
-        breakdown_kind=r.breakdown_kind,
+        breakdown_kind=r.breakdown_kind, manual_contract=r.manual_contract,
         brand_breakdown=[
             BrandBreakdownOut(
                 index=b.index, brand_code=b.brand_code, brand_name=b.brand_name, order_tabs=list(b.order_tabs),
