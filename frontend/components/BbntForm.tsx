@@ -6,7 +6,6 @@ import {
   ApiError,
   type BbntRequest,
   type BreakdownMode,
-  type CampLabel,
   generateBbnt,
   getMaster,
   type MasterOut,
@@ -56,6 +55,7 @@ export default function BbntForm() {
   const [brandCodes, setBrandCodes] = useState<string[]>([])
   const [groupCode, setGroupCode] = useState("")
   const [contractNo, setContractNo] = useState("")
+  const [manualContract, setManualContract] = useState(false)
   const [suffix, setSuffix] = useState("")
   const [campaign, setCampaign] = useState("")
   const [orderUrl, setOrderUrl] = useState("")
@@ -81,11 +81,9 @@ export default function BbntForm() {
   const [downloadingTab, setDownloadingTab] = useState<string | null>(null)
 
   // Tách bảng theo brand/camp (breakdown_mode) — bắt buộc chọn khi nghiệm thu group/nhiều brand cùng lúc.
-  // "brand" không cần nhập gì thêm; "camp" cần đặt tên riêng cho từng (link, tab) — portal tự phát hiện danh
-  // sách tab/link cần đặt tên qua lỗi TAB_CAMPAIGN_NAMES_REQUIRED của lần xem trước đầu tiên.
+  // Cả 2 chiều đều không cần nhập gì thêm: "camp" tự đặt tên mỗi camp theo tên tab/sheet đó (xem
+  // app.services.generator._resolve_camp_names ở backend) — portal không còn bắt gõ tay tên camp nữa.
   const [breakdownMode, setBreakdownMode] = useState<BreakdownMode | null>(null)
-  const [campSources, setCampSources] = useState<{ link_index: number; tab: string }[] | null>(null)
-  const [campNames, setCampNames] = useState<Record<string, string>>({})
 
   const loadMaster = useCallback(
     async (refresh = false) => {
@@ -123,11 +121,7 @@ export default function BbntForm() {
     setSplitNames({})
     setSplitResults(null)
     setBreakdownMode(null)
-    setCampSources(null)
-    setCampNames({})
   }
-
-  const campKey = (linkIndex: number, tab: string) => `${linkIndex}:${tab}`
 
   const brandsInChannel = useMemo(
     () => (master?.brands ?? []).filter((b) => b.channel === channel),
@@ -184,8 +178,13 @@ export default function BbntForm() {
   }, [brandsInChannel, groupsInChannel, mappingsInChannel])
 
   useEffect(() => {
-    if (contractNo && !contractOptions.some((c) => c.contract_no === contractNo)) setContractNo("")
-  }, [contractOptions, contractNo])
+    if (!manualContract && contractNo && !contractOptions.some((c) => c.contract_no === contractNo)) setContractNo("")
+  }, [contractOptions, contractNo, manualContract])
+
+  // Bật "tự điền" -> số hợp đồng tự chọn trước đó (nếu có) không còn ý nghĩa, để người dùng tự gõ lại từ đầu
+  useEffect(() => {
+    if (manualContract) setContractNo("")
+  }, [manualContract])
 
   // ---------------------------------------------------------------- validate + submit
   const problems: string[] = []
@@ -194,7 +193,8 @@ export default function BbntForm() {
   if (mode === "brand" && brandCodes.length === 0) problems.push("Chọn ít nhất 1 brand")
   if (mode === "group" && !groupCode) problems.push("Chọn group")
   if (mixedGroups) problems.push("Gộp nhiều brand chỉ được khi cùng 1 group")
-  if (!contractNo) problems.push("Chọn số hợp đồng (luôn tự chọn tay, không tự suy luận)")
+  if (!contractNo.trim())
+    problems.push(manualContract ? "Nhập số hợp đồng (tự điền)" : "Chọn số hợp đồng (luôn tự chọn tay, không tự suy luận)")
   if (!suffix.trim()) problems.push("Nhập đuôi biên bản nghiệm thu")
   if (!campaign.trim()) problems.push("Nhập tên chương trình")
   if (!SHEET_RE.test(orderUrl.trim())) problems.push("Dán link file order (Google Sheet hoặc file Excel trên Drive)")
@@ -208,18 +208,14 @@ export default function BbntForm() {
   if (needsBreakdownChoice && !breakdownMode) {
     problems.push(isGroupScope ? "Chọn cách tách bảng: theo brand hay theo camp" : "Chọn cách tách bảng theo camp")
   }
-  if (breakdownMode === "camp" && campSources && campSources.some((s) => !(campNames[campKey(s.link_index, s.tab)] ?? "").trim()))
-    problems.push("Đặt tên camp cho đủ các tab/link bên dưới")
 
   function buildRequest(tab = orderTab, tm: TabMode = tabMode, bm: BreakdownMode | null = breakdownMode): BbntRequest {
-    const camps = bm === "camp" && campSources
-      ? campSources.map((s) => ({ ...s, name: (campNames[campKey(s.link_index, s.tab)] ?? "").trim() }))
-      : []
     return {
       channel,
       entity,
       ...(mode === "brand" ? { brand_codes: brandCodes } : { group_code: groupCode }),
-      contract_no: contractNo,
+      contract_no: contractNo.trim(),
+      manual_contract: manualContract,
       ...(mappingCode ? { mapping_code: mappingCode } : {}),
       bbnt_suffix: suffix.trim(),
       campaign_name: campaign.trim(),
@@ -233,7 +229,6 @@ export default function BbntForm() {
       ...(tab ? { order_tab: tab } : {}),
       ...(tm !== "auto" ? { tab_mode: tm } : {}),
       ...(bm ? { breakdown_mode: bm } : {}),
-      ...(bm === "camp" ? { camp_names: camps as CampLabel[] } : {}),
     }
   }
 
@@ -255,16 +250,6 @@ export default function BbntForm() {
       }
     } catch (e) {
       const err = e as ApiError
-      // breakdown_mode === "camp" lần đầu (campSources chưa biết) -> backend trả danh sách (link, tab) cần đặt
-      // tên qua lỗi này; hiện form nhập tên thay vì báo lỗi thô
-      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && bm === "camp" && !campSources) {
-        const tabs = (err.details as { tabs?: { link_index: number; tab: string }[] } | undefined)?.tabs
-        if (tabs && tabs.length) {
-          setCampSources(tabs)
-          setBusy(null)
-          return
-        }
-      }
       if (!handleAuthError(err.status, err.code)) setError({ message: err.message, code: err.code, details: err.details })
     } finally {
       setBusy(null)
@@ -277,8 +262,6 @@ export default function BbntForm() {
     setOrderTab(tab)
     setTabMode("auto")
     setBreakdownMode(null)
-    setCampSources(null)
-    setCampNames({})
     setSplitTabs(null)
     setSplitResults(null)
     setPreview(null)
@@ -288,16 +271,13 @@ export default function BbntForm() {
 
   // File order có nhiều tab/camp mơ hồ (ORDER_TAB_AMBIGUOUS) -> tách bảng theo CAMP (breakdown_mode="camp",
   // dùng được cho MỌI phạm vi kể cả 1 brand) rồi gộp lại thành 1 BBNT DUY NHẤT — thay cho "gộp không tách gì"
-  // cũ (tab_mode="combine", đã bỏ hẳn). Backend sẽ báo TAB_CAMPAIGN_NAMES_REQUIRED ngay lần xem trước đầu tiên
-  // để portal hiện form đặt tên camp cho từng tab (xem nhánh xử lý lỗi trong run()).
+  // cũ (tab_mode="combine", đã bỏ hẳn). Tên camp tự lấy theo tên tab/sheet (backend), không cần hỏi gì thêm.
   function runCombine() {
     setOrderTab("")
     setSplitTabs(null)
     setSplitResults(null)
     setTabMode("auto")
     setBreakdownMode("camp")
-    setCampSources(null)
-    setCampNames({})
     setPreview(null)
     setDownloaded(null)
     void run("preview", "", "auto", "camp")
@@ -307,8 +287,6 @@ export default function BbntForm() {
   // breakdown_mode — bỏ luôn nếu đang chọn tách bảng)
   function startSplit(tabs: string[]) {
     setBreakdownMode(null)
-    setCampSources(null)
-    setCampNames({})
     setSplitTabs(tabs)
     setSplitNames(Object.fromEntries(tabs.map((t) => [t, ""])))
     setSplitResults(null)
@@ -358,8 +336,6 @@ export default function BbntForm() {
     setPreview(null)
     setError(null)
     setDownloaded(null)
-    setCampSources(null)
-    setCampNames({})
   }
 
   // Link order #2..#10 (extraOrderUrls) — mỗi link 1 ô nhập riêng, sửa/xoá trực tiếp tại chỗ (không qua ô nhập
@@ -493,52 +469,43 @@ export default function BbntForm() {
                 Theo camp
               </button>
             </div>
-            {breakdownMode === "camp" && campSources === null && (
-              <p className="hint">Bấm "Xem trước" để portal liệt kê các tab/link cần đặt tên camp.</p>
-            )}
-          </fieldset>
-        )}
-
-        {/* Đặt tên camp — hiện độc lập với "needsBreakdownChoice" ở trên: file order 1 brand nhiều tab/camp mơ
-            hồ (ORDER_TAB_AMBIGUOUS) cũng dùng breakdown_mode="camp" qua nút "Gộp tất cả thành 1 BBNT" mà không
-            cần chọn trước ở đây (xem runCombine) — vẫn cần nhập tên camp ngay khi backend báo thiếu. */}
-        {breakdownMode === "camp" && campSources && (
-          <fieldset>
-            <legend>Đặt tên camp</legend>
-            <p className="hint">Đặt tên camp riêng cho từng tab/link bên dưới (bắt buộc, không được trùng nhau).</p>
-            <div className="camp-names">
-              {campSources.map((s) => (
-                <label key={campKey(s.link_index, s.tab)}>
-                  {s.link_index === 0 ? "Link chính" : `Link phụ #${s.link_index}`} · tab {s.tab}
-                  <input
-                    value={campNames[campKey(s.link_index, s.tab)] ?? ""}
-                    onChange={(e) =>
-                      setCampNames((n) => ({ ...n, [campKey(s.link_index, s.tab)]: e.target.value }))
-                    }
-                    placeholder="VD: Camp Mix"
-                    maxLength={100}
-                  />
-                </label>
-              ))}
-            </div>
           </fieldset>
         )}
 
         <fieldset>
           <legend>Hợp đồng & đuôi biên bản nghiệm thu</legend>
           <div className="row">
-            <label>
-              Số hợp đồng
-              <select value={contractNo} onChange={(e) => touch(setContractNo)(e.target.value)}>
-                <option value="">— Chọn hợp đồng —</option>
-                {contractOptions.map((c) => (
-                  <option key={c.contract_no} value={c.contract_no}>
-                    {c.contract_no} — {pct(c.commission_rate)} ({vnDate(c.valid_from)} → {vnDate(c.valid_to)})
-                  </option>
-                ))}
-              </select>
-              <span className="hint">Luôn tự chọn tay — hợp đồng/% hoa hồng áp dụng không còn tự suy ra theo kỳ nghiệm thu.</span>
-            </label>
+            <div>
+              <label className="check manual-contract-toggle">
+                <input type="checkbox" checked={manualContract} onChange={(e) => touch(setManualContract)(e.target.checked)} />
+                Hợp đồng chưa có trong hệ thống — tự gõ
+              </label>
+              <label>
+                Số hợp đồng
+                {manualContract ? (
+                  <input
+                    value={contractNo}
+                    onChange={(e) => touch(setContractNo)(e.target.value)}
+                    placeholder="VD: 01/2026/HĐDV/EZS-ORGANICA"
+                    maxLength={100}
+                  />
+                ) : (
+                  <select value={contractNo} onChange={(e) => touch(setContractNo)(e.target.value)}>
+                    <option value="">— Chọn hợp đồng —</option>
+                    {contractOptions.map((c) => (
+                      <option key={c.contract_no} value={c.contract_no}>
+                        {c.contract_no} — {pct(c.commission_rate)} ({vnDate(c.valid_from)} → {vnDate(c.valid_to)})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <span className="hint">
+                  {manualContract
+                    ? "Hợp đồng chưa có trong Sheet master — tự gõ số hợp đồng. Bên A/% hoa hồng/VAT/ngày ký sẽ để TRỐNG (placeholder), tự điền tay trên file .docx sau khi tải."
+                    : "Luôn tự chọn tay — hợp đồng/% hoa hồng áp dụng không còn tự suy ra theo kỳ nghiệm thu."}
+                </span>
+              </label>
+            </div>
             <label>
               Đuôi biên bản nghiệm thu
               <input
@@ -747,6 +714,13 @@ function PreviewCard({
   const byCode = p.warnings.reduce<Record<string, number>>((acc, w) => ((acc[w.code] = (acc[w.code] ?? 0) + 1), acc), {})
   return (
     <div className="card">
+      {p.manual_contract && (
+        <p className="alert warn">
+          Hợp đồng TỰ ĐIỀN — chưa có trong Sheet master. Bên A, % hoa hồng, VAT/khấu trừ và ngày ký ở dưới đều là
+          CHỖ TRỐNG (placeholder), hoa hồng/VAT/tổng thanh toán đều hiện 0. Sau khi tải file .docx, phải tự điền
+          tay đầy đủ các mục này trước khi dùng để thanh toán — KHÔNG dùng số liệu bên dưới làm căn cứ thật.
+        </p>
+      )}
       <p className="muted">Số BBNT</p>
       <h2 className="number">{p.bbnt_number}</h2>
       <p>
