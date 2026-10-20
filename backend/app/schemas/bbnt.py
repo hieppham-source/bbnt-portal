@@ -27,7 +27,7 @@ class CampLabelIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    link_index: int = Field(ge=0, le=19)
+    link_index: int = Field(ge=0, le=9)
     tab: str = Field(min_length=1, max_length=200)
     name: str = Field(min_length=1, max_length=100)
 
@@ -70,8 +70,9 @@ class BbntRequest(BaseModel):
                              description="Đuôi biên bản nghiệm thu người làm tự gõ — portal tự chuẩn hoá")
     campaign_name: str = Field(min_length=1, max_length=100, examples=["BDAY"])
     order_sheet_url: str = Field(examples=["https://docs.google.com/spreadsheets/d/1AbC.../edit#gid=0"])
-    extra_order_sheet_urls: list[str] = Field(default_factory=list, max_length=19,
-                                              description="Link order BỔ SUNG để gộp chung 1 BBNT")
+    extra_order_sheet_urls: list[str] = Field(default_factory=list, max_length=9,
+                                              description="Link order BỔ SUNG để gộp chung 1 BBNT "
+                                                          "(tối đa 10 link kể cả order_sheet_url)")
     mapping_code: str | None = Field(default=None, max_length=50)
     collected_on_behalf: Decimal = Field(default=Decimal(0), ge=0, max_digits=16, decimal_places=2)
     consulting_fee: Decimal = Field(default=Decimal(0), ge=0, max_digits=16, decimal_places=2)
