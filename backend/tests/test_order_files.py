@@ -78,10 +78,38 @@ def test_campaign_name_breaks_tie_between_tabs_of_same_brand(env):
     assert env.post("/api/v1/bbnt/preview", ORGANICA).json()["order_tab"] == "ORGANICA ORDER BDAY 05.26"
 
 
-def test_gid_in_link_breaks_tie(env):
+def test_gid_does_not_resolve_a_pure_tie_even_between_just_2_tabs(env):
+    """2 tab hoàn toàn không có tín hiệu nội dung nào (không khớp brand/chương trình) -> gid (tab đang mở khi
+    copy link) không còn đủ để tự chọn 1 tab, kể cả chỉ có 2 tab — phải báo ORDER_TAB_AMBIGUOUS. Trước đây gid
+    từng tự chọn thẳng 1 tab trong trường hợp này, nhưng đó chính là kiểu lỗi âm thầm bỏ sót camp còn lại khi
+    file chỉ có đúng 2 tab/camp (xem test_gid_does_not_silently_pick_1_tab_out_of_a_multi_camp_file bên dưới
+    cho 3 tab) — gid chỉ còn tác dụng phá thế hoà khi các tab ĐÃ có tín hiệu nội dung thật (xem test kế tiếp)."""
     put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
-    b = env.post("/api/v1/bbnt/preview", {**ORGANICA, "order_sheet_url": ORDER_URL_FB.replace("gid=0", "gid=1")})
-    assert b.json()["order_tab"] == "ORDER 2"
+    r = env.post("/api/v1/bbnt/preview", {**ORGANICA, "order_sheet_url": ORDER_URL_FB.replace("gid=0", "gid=1")})
+    assert r.status_code == 409 and r.json()["code"] == "ORDER_TAB_AMBIGUOUS"
+
+
+def test_gid_still_breaks_a_tie_when_tabs_already_share_real_content_signal(env):
+    """2 tab CÙNG khớp brand + tên chương trình ngang điểm nhau (vd 2 bản ghi/sửa đổi trùng tên) -> gid (tab
+    đang mở khi copy link) vẫn hợp lý để chọn giúp 1 trong 2, không cần hỏi lại."""
+    put(env, {"ORGANICA BDAY A": ORG, "ORGANICA BDAY B": ORG})
+    r = env.post("/api/v1/bbnt/preview", {**ORGANICA, "order_sheet_url": ORDER_URL_FB.replace("gid=0", "gid=1")})
+    assert r.status_code == 200 and r.json()["order_tab"] == "ORGANICA BDAY B"
+
+
+def test_gid_does_not_silently_pick_1_tab_out_of_a_multi_camp_file(env):
+    """3+ tab hoàn toàn không tên brand/chương trình nào (vd 1 brand chạy nhiều camp: "CAMPMIX7/8/9", mỗi tab 1
+    đợt) — link order đang mở đúng 1 trong số đó (gid) KHÔNG được tự chọn mỗi tab đó rồi âm thầm bỏ qua 2 camp
+    còn lại; phải báo ORDER_TAB_AMBIGUOUS để người dùng gộp qua breakdown_mode='camp' (xem
+    test_breakdown_camp_merges_all_candidate_tabs_of_1_brand)."""
+    put(env, {"CAMPMIX7": ORG, "CAMPMIX8": ORG, "CAMPMIX9": ORG})
+    url = ORDER_URL_FB.replace("gid=0", "gid=2")  # đang mở đúng tab CAMPMIX9 khi copy link
+    r = env.post("/api/v1/bbnt/preview", {**ORGANICA, "order_sheet_url": url})
+    assert r.status_code == 409 and r.json()["code"] == "ORDER_TAB_AMBIGUOUS"
+    assert set(r.json()["details"]["tabs"]) == {"CAMPMIX7", "CAMPMIX8", "CAMPMIX9"}
+    # vẫn chọn thẳng được nếu người dùng tự xác nhận đúng 1 tab đó
+    r = env.post("/api/v1/bbnt/preview", {**ORGANICA, "order_sheet_url": url, "order_tab": "CAMPMIX9"})
+    assert r.status_code == 200 and r.json()["order_tab"] == "CAMPMIX9"
 
 
 def test_unknown_requested_tab_and_no_matching_tab(env):
@@ -113,6 +141,18 @@ def test_breakdown_camp_merges_all_candidate_tabs_of_1_brand(env):
     assert [c["brand_code"] for c in camps] == [None, None]
     assert [c["order_tabs"] for c in camps] == [["ORDER 1"], ["ORDER 2"]]
     assert all(Decimal(c["nmv"]) == 3_500_000 and Decimal(c["gmv_estimated"]) == 6_000_000 for c in camps)
+
+
+def test_breakdown_camp_names_default_to_tab_name_without_camp_names(env):
+    """``camp_names`` tuỳ chọn — bỏ hẳn, không truyền gì cả — tên camp tự lấy theo tên tab/sheet đó (đúng case
+    thật Milktouch: tab "CAMPMIX7/8/9", không cần gõ tay tên camp nữa)."""
+    put(env, {"CAMPMIX7": ORG, "CAMPMIX8": ORG, "CAMPMIX9": ORG})
+    r = env.post("/api/v1/bbnt/preview", {**NO_GID, "breakdown_mode": "camp"})
+    assert r.status_code == 200, r.text
+    b = r.json()
+    camps = {c["brand_name"]: c for c in b["brand_breakdown"]}
+    assert set(camps) == {"CAMPMIX7", "CAMPMIX8", "CAMPMIX9"}
+    assert camps["CAMPMIX7"]["order_tabs"] == ["CAMPMIX7"]
 
 
 def test_preview_split_returns_one_bbnt_per_tab_with_r_suffix(env):
