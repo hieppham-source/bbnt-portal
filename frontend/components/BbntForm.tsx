@@ -16,9 +16,19 @@ import {
   type RowIssue,
   type TabMode,
 } from "@/lib/api"
-import { monthToPeriod, pct, periodToMonth, previousMonth, vnd, vnDate } from "@/lib/format"
+import { pct, vnd, vnDate } from "@/lib/format"
 
 import { handleAuthError, reconsent, useIdToken } from "./useIdToken"
+
+/** Xem trước cách portal sẽ chuẩn hoá "đuôi biên bản nghiệm thu" người dùng gõ (chỉ để hiển thị — việc chuẩn
+ * hoá thật sự luôn do backend làm qua `normalize_suffix`). */
+function previewSuffix(raw: string): string {
+  return raw
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
 
 type Mode = "brand" | "group"
 type Shown = { message: string; code?: string; details?: unknown }
@@ -43,8 +53,7 @@ export default function BbntForm() {
   const [brandCodes, setBrandCodes] = useState<string[]>([])
   const [groupCode, setGroupCode] = useState("")
   const [contractNo, setContractNo] = useState("")
-  const [months, setMonths] = useState<string[]>(() => [monthToPeriod(previousMonth())])
-  const [monthInput, setMonthInput] = useState(previousMonth())
+  const [suffix, setSuffix] = useState("")
   const [campaign, setCampaign] = useState("")
   const [orderUrl, setOrderUrl] = useState("")
   const [extraOrderUrls, setExtraOrderUrls] = useState<string[]>([])
@@ -171,24 +180,25 @@ export default function BbntForm() {
   if (mode === "brand" && brandCodes.length === 0) problems.push("Chọn ít nhất 1 brand")
   if (mode === "group" && !groupCode) problems.push("Chọn group")
   if (mixedGroups) problems.push("Gộp nhiều brand chỉ được khi cùng 1 group")
-  if (months.length === 0) problems.push("Chọn ít nhất 1 tháng nghiệm thu")
+  if (!contractNo) problems.push("Chọn số hợp đồng (luôn tự chọn tay, không tự suy luận)")
+  if (!suffix.trim()) problems.push("Nhập đuôi biên bản nghiệm thu")
   if (!campaign.trim()) problems.push("Nhập tên chương trình")
   if (!SHEET_RE.test(orderUrl.trim())) problems.push("Dán link file order (Google Sheet hoặc file Excel trên Drive)")
   if (needsBreakdownChoice && !breakdownMode) problems.push("Chọn cách tách bảng: theo brand hay theo camp")
   if (breakdownMode === "camp" && campSources && campSources.some((s) => !(campNames[campKey(s.link_index, s.tab)] ?? "").trim()))
     problems.push("Đặt tên camp cho đủ các tab/link bên dưới")
 
-  function buildRequest(tab = orderTab, tm: TabMode = tabMode): BbntRequest {
-    const camps = breakdownMode === "camp" && campSources
+  function buildRequest(tab = orderTab, tm: TabMode = tabMode, bm: BreakdownMode | null = breakdownMode): BbntRequest {
+    const camps = bm === "camp" && campSources
       ? campSources.map((s) => ({ ...s, name: (campNames[campKey(s.link_index, s.tab)] ?? "").trim() }))
       : []
     return {
       channel,
       entity,
       ...(mode === "brand" ? { brand_codes: brandCodes } : { group_code: groupCode }),
-      ...(contractNo ? { contract_no: contractNo } : {}),
+      contract_no: contractNo,
       ...(mappingCode ? { mapping_code: mappingCode } : {}),
-      period_months: months,
+      bbnt_suffix: suffix.trim(),
       campaign_name: campaign.trim(),
       order_sheet_url: orderUrl.trim(),
       ...(extraOrderUrls.length ? { extra_order_sheet_urls: extraOrderUrls } : {}),
@@ -197,17 +207,22 @@ export default function BbntForm() {
       strip_comments: stripComments,
       ...(tab ? { order_tab: tab } : {}),
       ...(tm !== "auto" ? { tab_mode: tm } : {}),
-      ...(needsBreakdownChoice && breakdownMode ? { breakdown_mode: breakdownMode } : {}),
-      ...(breakdownMode === "camp" ? { camp_names: camps as CampLabel[] } : {}),
+      ...(bm ? { breakdown_mode: bm } : {}),
+      ...(bm === "camp" ? { camp_names: camps as CampLabel[] } : {}),
     }
   }
 
-  async function run(kind: "preview" | "generate", tab = orderTab, tm: TabMode = tabMode) {
+  async function run(
+    kind: "preview" | "generate",
+    tab = orderTab,
+    tm: TabMode = tabMode,
+    bm: BreakdownMode | null = breakdownMode,
+  ) {
     if (!token || problems.length) return
     setBusy(kind)
     setError(null)
     try {
-      const req = buildRequest(tab, tm)
+      const req = buildRequest(tab, tm, bm)
       if (kind === "preview") {
         setPreview(await previewBbnt(token, req))
       } else {
@@ -217,7 +232,7 @@ export default function BbntForm() {
       const err = e as ApiError
       // breakdown_mode === "camp" lần đầu (campSources chưa biết) -> backend trả danh sách (link, tab) cần đặt
       // tên qua lỗi này; hiện form nhập tên thay vì báo lỗi thô
-      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && breakdownMode === "camp" && !campSources) {
+      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && bm === "camp" && !campSources) {
         const tabs = (err.details as { tabs?: { link_index: number; tab: string }[] } | undefined)?.tabs
         if (tabs && tabs.length) {
           setCampSources(tabs)
@@ -231,30 +246,44 @@ export default function BbntForm() {
     }
   }
 
-  // Chọn tab khác trong file order -> tính lại ngay (bỏ chế độ gộp/tách nếu đang chọn)
+  // Chọn tab khác trong file order -> tính lại ngay (order_tab không dùng được cùng breakdown_mode — bỏ luôn
+  // nếu đang chọn tách bảng/tách BBNT riêng)
   function pickTab(tab: string) {
     setOrderTab(tab)
     setTabMode("auto")
+    setBreakdownMode(null)
+    setCampSources(null)
+    setCampNames({})
     setSplitTabs(null)
     setSplitResults(null)
     setPreview(null)
     setDownloaded(null)
-    void run("preview", tab, "auto")
+    void run("preview", tab, "auto", null)
   }
 
-  // File order có nhiều tab/camp mơ hồ (ORDER_TAB_AMBIGUOUS) -> gộp TẤT CẢ lại thành 1 BBNT
+  // File order có nhiều tab/camp mơ hồ (ORDER_TAB_AMBIGUOUS) -> tách bảng theo CAMP (breakdown_mode="camp",
+  // dùng được cho MỌI phạm vi kể cả 1 brand) rồi gộp lại thành 1 BBNT DUY NHẤT — thay cho "gộp không tách gì"
+  // cũ (tab_mode="combine", đã bỏ hẳn). Backend sẽ báo TAB_CAMPAIGN_NAMES_REQUIRED ngay lần xem trước đầu tiên
+  // để portal hiện form đặt tên camp cho từng tab (xem nhánh xử lý lỗi trong run()).
   function runCombine() {
     setOrderTab("")
     setSplitTabs(null)
     setSplitResults(null)
-    setTabMode("combine")
+    setTabMode("auto")
+    setBreakdownMode("camp")
+    setCampSources(null)
+    setCampNames({})
     setPreview(null)
     setDownloaded(null)
-    void run("preview", "", "combine")
+    void run("preview", "", "auto", "camp")
   }
 
-  // Mở form nhập Tên chương trình riêng cho từng tab trước khi tách
+  // Mở form nhập Tên chương trình riêng cho từng tab trước khi tách (tab_mode="split" không dùng cùng
+  // breakdown_mode — bỏ luôn nếu đang chọn tách bảng)
   function startSplit(tabs: string[]) {
+    setBreakdownMode(null)
+    setCampSources(null)
+    setCampNames({})
     setSplitTabs(tabs)
     setSplitNames(Object.fromEntries(tabs.map((t) => [t, ""])))
     setSplitResults(null)
@@ -306,12 +335,6 @@ export default function BbntForm() {
     setDownloaded(null)
     setCampSources(null)
     setCampNames({})
-  }
-
-  function addMonth() {
-    if (!monthInput) return
-    const p = monthToPeriod(monthInput)
-    touch(setMonths)([...new Set([...months, p])].sort((a, b) => periodToMonth(a).localeCompare(periodToMonth(b))))
   }
 
   function addExtraOrderUrl() {
@@ -439,44 +462,63 @@ export default function BbntForm() {
             {breakdownMode === "camp" && campSources === null && (
               <p className="hint">Bấm "Xem trước" để portal liệt kê các tab/link cần đặt tên camp.</p>
             )}
-            {breakdownMode === "camp" && campSources && (
-              <div className="camp-names">
-                <p className="hint">Đặt tên camp riêng cho từng tab/link bên dưới (bắt buộc, không được trùng nhau).</p>
-                {campSources.map((s) => (
-                  <label key={campKey(s.link_index, s.tab)}>
-                    {s.link_index === 0 ? "Link chính" : `Link phụ #${s.link_index}`} · tab {s.tab}
-                    <input
-                      value={campNames[campKey(s.link_index, s.tab)] ?? ""}
-                      onChange={(e) =>
-                        setCampNames((n) => ({ ...n, [campKey(s.link_index, s.tab)]: e.target.value }))
-                      }
-                      placeholder="VD: Camp Mix"
-                      maxLength={100}
-                    />
-                  </label>
-                ))}
-              </div>
-            )}
+          </fieldset>
+        )}
+
+        {/* Đặt tên camp — hiện độc lập với "needsBreakdownChoice" ở trên: file order 1 brand nhiều tab/camp mơ
+            hồ (ORDER_TAB_AMBIGUOUS) cũng dùng breakdown_mode="camp" qua nút "Gộp tất cả thành 1 BBNT" mà không
+            cần chọn trước ở đây (xem runCombine) — vẫn cần nhập tên camp ngay khi backend báo thiếu. */}
+        {breakdownMode === "camp" && campSources && (
+          <fieldset>
+            <legend>Đặt tên camp</legend>
+            <p className="hint">Đặt tên camp riêng cho từng tab/link bên dưới (bắt buộc, không được trùng nhau).</p>
+            <div className="camp-names">
+              {campSources.map((s) => (
+                <label key={campKey(s.link_index, s.tab)}>
+                  {s.link_index === 0 ? "Link chính" : `Link phụ #${s.link_index}`} · tab {s.tab}
+                  <input
+                    value={campNames[campKey(s.link_index, s.tab)] ?? ""}
+                    onChange={(e) =>
+                      setCampNames((n) => ({ ...n, [campKey(s.link_index, s.tab)]: e.target.value }))
+                    }
+                    placeholder="VD: Camp Mix"
+                    maxLength={100}
+                  />
+                </label>
+              ))}
+            </div>
           </fieldset>
         )}
 
         <fieldset>
-          <legend>Kỳ nghiệm thu</legend>
-          <div className="row tight">
-            <input type="month" value={monthInput} onChange={(e) => setMonthInput(e.target.value)} />
-            <button type="button" onClick={addMonth}>
-              Thêm tháng
-            </button>
-          </div>
-          <div className="chips">
-            {months.map((m) => (
-              <span key={m} className="chip">
-                {m}
-                <button type="button" aria-label={`Bỏ ${m}`} onClick={() => touch(setMonths)(months.filter((x) => x !== m))}>
-                  ×
-                </button>
+          <legend>Hợp đồng & đuôi biên bản nghiệm thu</legend>
+          <div className="row">
+            <label>
+              Số hợp đồng
+              <select value={contractNo} onChange={(e) => touch(setContractNo)(e.target.value)}>
+                <option value="">— Chọn hợp đồng —</option>
+                {contractOptions.map((c) => (
+                  <option key={c.contract_no} value={c.contract_no}>
+                    {c.contract_no} — {pct(c.commission_rate)} ({vnDate(c.valid_from)} → {vnDate(c.valid_to)})
+                  </option>
+                ))}
+              </select>
+              <span className="hint">Luôn tự chọn tay — hợp đồng/% hoa hồng áp dụng không còn tự suy ra theo kỳ nghiệm thu.</span>
+            </label>
+            <label>
+              Đuôi biên bản nghiệm thu
+              <input
+                value={suffix}
+                onChange={(e) => touch(setSuffix)(e.target.value)}
+                placeholder='VD: "BDAY 05" hoặc "Q3 CAMP"'
+                maxLength={60}
+              />
+              <span className="hint">
+                Tự gõ, ráp thẳng vào số BBNT{suffix.trim() ? ` (vd ...-${previewSuffix(suffix)})` : ""}. Portal tự
+                chuẩn hoá: in hoa, đổi khoảng trắng/ký tự lạ thành gạch ngang. Link order mặc định tính TOÀN BỘ dòng
+                đơn, không lọc theo tháng nữa.
               </span>
-            ))}
+            </label>
           </div>
         </fieldset>
 
@@ -531,17 +573,6 @@ export default function BbntForm() {
         <details>
           <summary>Tuỳ chọn thêm</summary>
           <div className="row">
-            <label>
-              Số hợp đồng
-              <select value={contractNo} onChange={(e) => touch(setContractNo)(e.target.value)}>
-                <option value="">Tự chọn theo hiệu lực</option>
-                {contractOptions.map((c) => (
-                  <option key={c.contract_no} value={c.contract_no}>
-                    {c.contract_no} — {pct(c.commission_rate)} ({vnDate(c.valid_from)} → {vnDate(c.valid_to)})
-                  </option>
-                ))}
-              </select>
-            </label>
             {mappingsInChannel.length > 1 && (
               <label>
                 Mapping file order
@@ -861,7 +892,8 @@ function SummaryTable({ f }: { f: PreviewOut["figures"] }) {
 
 // Bảng tách doanh thu ước tính/thực nhận/tỷ lệ huỷ theo brand hoặc theo camp — chỉ hiển thị khi breakdown_kind !==
 // "none" (chọn breakdown_mode, hoặc link order tự nhận diện "1 tab/brand"). Hoa hồng/VAT/thanh toán KHÔNG tách —
-// xem bảng tổng hợp phía trên, dòng hint nhắc lại điều này.
+// xem bảng tổng hợp phía trên, dòng hint nhắc lại điều này. Dưới bảng tổng hợp là danh sách sản phẩm RIÊNG của
+// từng brand/camp kèm tổng kết số lượng + doanh thu (issue #2: tách danh sách sản phẩm, không chỉ bảng doanh thu).
 function BreakdownTable({ kind, rows }: { kind: "brand" | "camp"; rows: PreviewOut["brand_breakdown"] }) {
   return (
     <div>
@@ -887,6 +919,43 @@ function BreakdownTable({ kind, rows }: { kind: "brand" | "camp"; rows: PreviewO
         </tbody>
       </table>
       <p className="hint">Hoa hồng/VAT/khấu trừ/tổng thanh toán tính chung trên TOÀN BỘ (xem bảng tổng hợp bên trên).</p>
+
+      {rows.map((x) => {
+        const totalQty = x.items.reduce((s, i) => s + i.quantity, 0)
+        const totalRevenue = x.items.reduce((s, i) => s + Number(i.revenue), 0)
+        return (
+          <div key={x.index} className="breakdown-items">
+            <h4>
+              Sản phẩm — {x.brand_name} ({x.items.length})
+            </h4>
+            <table className="items">
+              <thead>
+                <tr>
+                  <th>Tên sản phẩm</th>
+                  <th>SL</th>
+                  <th>Doanh thu</th>
+                </tr>
+              </thead>
+              <tbody>
+                {x.items.map((i, k) => (
+                  <tr key={k}>
+                    <td>{i.product_name}</td>
+                    <td>{i.quantity}</td>
+                    <td>{vnd(i.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="total">
+                  <td>Tổng {x.brand_name}</td>
+                  <td>{totalQty}</td>
+                  <td>{vnd(totalRevenue)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )
+      })}
     </div>
   )
 }
