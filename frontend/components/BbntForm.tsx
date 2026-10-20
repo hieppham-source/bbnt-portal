@@ -5,12 +5,16 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ApiError,
   type BbntRequest,
+  type BreakdownMode,
+  type CampLabel,
   generateBbnt,
   getMaster,
   type MasterOut,
   previewBbnt,
+  previewBbntSplit,
   type PreviewOut,
   type RowIssue,
+  type TabMode,
 } from "@/lib/api"
 import { monthToPeriod, pct, periodToMonth, previousMonth, vnd, vnDate } from "@/lib/format"
 
@@ -43,7 +47,10 @@ export default function BbntForm() {
   const [monthInput, setMonthInput] = useState(previousMonth())
   const [campaign, setCampaign] = useState("")
   const [orderUrl, setOrderUrl] = useState("")
+  const [extraOrderUrls, setExtraOrderUrls] = useState<string[]>([])
+  const [extraOrderInput, setExtraOrderInput] = useState("")
   const [orderTab, setOrderTab] = useState("")
+  const [tabMode, setTabMode] = useState<TabMode>("auto")
   const [mappingCode, setMappingCode] = useState("")
   const [collected, setCollected] = useState("")
   const [consulting, setConsulting] = useState("")
@@ -52,8 +59,22 @@ export default function BbntForm() {
   // ---------------------------------------------------------------- result
   const [preview, setPreview] = useState<PreviewOut | null>(null)
   const [error, setError] = useState<Shown | null>(null)
-  const [busy, setBusy] = useState<"preview" | "generate" | null>(null)
+  const [busy, setBusy] = useState<"preview" | "generate" | "split" | null>(null)
   const [downloaded, setDownloaded] = useState<string | null>(null)
+
+  // Tách BBNT theo tab (tab_mode === "split"): sau khi báo ORDER_TAB_AMBIGUOUS, người dùng có thể chọn
+  // "Tách thành nhiều BBNT riêng" -> nhập Tên chương trình riêng cho từng tab -> xem trước mảng kết quả.
+  const [splitTabs, setSplitTabs] = useState<string[] | null>(null)
+  const [splitNames, setSplitNames] = useState<Record<string, string>>({})
+  const [splitResults, setSplitResults] = useState<PreviewOut[] | null>(null)
+  const [downloadingTab, setDownloadingTab] = useState<string | null>(null)
+
+  // Tách bảng theo brand/camp (breakdown_mode) — bắt buộc chọn khi nghiệm thu group/nhiều brand cùng lúc.
+  // "brand" không cần nhập gì thêm; "camp" cần đặt tên riêng cho từng (link, tab) — portal tự phát hiện danh
+  // sách tab/link cần đặt tên qua lỗi TAB_CAMPAIGN_NAMES_REQUIRED của lần xem trước đầu tiên.
+  const [breakdownMode, setBreakdownMode] = useState<BreakdownMode | null>(null)
+  const [campSources, setCampSources] = useState<{ link_index: number; tab: string }[] | null>(null)
+  const [campNames, setCampNames] = useState<Record<string, string>>({})
 
   const loadMaster = useCallback(
     async (refresh = false) => {
@@ -86,7 +107,16 @@ export default function BbntForm() {
     setError(null)
     setDownloaded(null)
     setOrderTab("")
+    setTabMode("auto")
+    setSplitTabs(null)
+    setSplitNames({})
+    setSplitResults(null)
+    setBreakdownMode(null)
+    setCampSources(null)
+    setCampNames({})
   }
+
+  const campKey = (linkIndex: number, tab: string) => `${linkIndex}:${tab}`
 
   const brandsInChannel = useMemo(
     () => (master?.brands ?? []).filter((b) => b.channel === channel),
@@ -105,6 +135,9 @@ export default function BbntForm() {
   const selectedBrands = brandsInChannel.filter((b) => brandCodes.includes(b.code))
   const brandGroups = new Set(selectedBrands.map((b) => b.group_code))
   const mixedGroups = mode === "brand" && selectedBrands.length > 1 && (brandGroups.size > 1 || brandGroups.has(null))
+
+  // Nghiệm thu group/nhiều brand cùng lúc -> bắt buộc chọn cách tách bảng (theo brand hay theo camp)
+  const needsBreakdownChoice = mode === "group" ? !!groupCode : brandCodes.length > 1 && !mixedGroups
 
   const contractOptions = useMemo(() => {
     if (!master) return []
@@ -141,8 +174,14 @@ export default function BbntForm() {
   if (months.length === 0) problems.push("Chọn ít nhất 1 tháng nghiệm thu")
   if (!campaign.trim()) problems.push("Nhập tên chương trình")
   if (!SHEET_RE.test(orderUrl.trim())) problems.push("Dán link file order (Google Sheet hoặc file Excel trên Drive)")
+  if (needsBreakdownChoice && !breakdownMode) problems.push("Chọn cách tách bảng: theo brand hay theo camp")
+  if (breakdownMode === "camp" && campSources && campSources.some((s) => !(campNames[campKey(s.link_index, s.tab)] ?? "").trim()))
+    problems.push("Đặt tên camp cho đủ các tab/link bên dưới")
 
-  function buildRequest(tab = orderTab): BbntRequest {
+  function buildRequest(tab = orderTab, tm: TabMode = tabMode): BbntRequest {
+    const camps = breakdownMode === "camp" && campSources
+      ? campSources.map((s) => ({ ...s, name: (campNames[campKey(s.link_index, s.tab)] ?? "").trim() }))
+      : []
     return {
       channel,
       entity,
@@ -152,24 +191,87 @@ export default function BbntForm() {
       period_months: months,
       campaign_name: campaign.trim(),
       order_sheet_url: orderUrl.trim(),
+      ...(extraOrderUrls.length ? { extra_order_sheet_urls: extraOrderUrls } : {}),
       collected_on_behalf: Number(collected || 0),
       consulting_fee: Number(consulting || 0),
       strip_comments: stripComments,
       ...(tab ? { order_tab: tab } : {}),
+      ...(tm !== "auto" ? { tab_mode: tm } : {}),
+      ...(needsBreakdownChoice && breakdownMode ? { breakdown_mode: breakdownMode } : {}),
+      ...(breakdownMode === "camp" ? { camp_names: camps as CampLabel[] } : {}),
     }
   }
 
-  async function run(kind: "preview" | "generate", tab = orderTab) {
+  async function run(kind: "preview" | "generate", tab = orderTab, tm: TabMode = tabMode) {
     if (!token || problems.length) return
     setBusy(kind)
     setError(null)
     try {
-      const req = buildRequest(tab)
+      const req = buildRequest(tab, tm)
       if (kind === "preview") {
         setPreview(await previewBbnt(token, req))
       } else {
         setDownloaded(await generateBbnt(token, req))
       }
+    } catch (e) {
+      const err = e as ApiError
+      // breakdown_mode === "camp" lần đầu (campSources chưa biết) -> backend trả danh sách (link, tab) cần đặt
+      // tên qua lỗi này; hiện form nhập tên thay vì báo lỗi thô
+      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && breakdownMode === "camp" && !campSources) {
+        const tabs = (err.details as { tabs?: { link_index: number; tab: string }[] } | undefined)?.tabs
+        if (tabs && tabs.length) {
+          setCampSources(tabs)
+          setBusy(null)
+          return
+        }
+      }
+      if (!handleAuthError(err.status, err.code)) setError({ message: err.message, code: err.code, details: err.details })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Chọn tab khác trong file order -> tính lại ngay (bỏ chế độ gộp/tách nếu đang chọn)
+  function pickTab(tab: string) {
+    setOrderTab(tab)
+    setTabMode("auto")
+    setSplitTabs(null)
+    setSplitResults(null)
+    setPreview(null)
+    setDownloaded(null)
+    void run("preview", tab, "auto")
+  }
+
+  // File order có nhiều tab/camp mơ hồ (ORDER_TAB_AMBIGUOUS) -> gộp TẤT CẢ lại thành 1 BBNT
+  function runCombine() {
+    setOrderTab("")
+    setSplitTabs(null)
+    setSplitResults(null)
+    setTabMode("combine")
+    setPreview(null)
+    setDownloaded(null)
+    void run("preview", "", "combine")
+  }
+
+  // Mở form nhập Tên chương trình riêng cho từng tab trước khi tách
+  function startSplit(tabs: string[]) {
+    setSplitTabs(tabs)
+    setSplitNames(Object.fromEntries(tabs.map((t) => [t, ""])))
+    setSplitResults(null)
+    setError(null)
+  }
+
+  async function runSplit() {
+    if (!token || !splitTabs) return
+    setBusy("split")
+    setError(null)
+    try {
+      const req = buildRequest("", "split")
+      req.tab_campaign_names = Object.fromEntries(splitTabs.map((t) => [t, (splitNames[t] ?? "").trim()]))
+      const res = await previewBbntSplit(token, req)
+      setSplitResults(res.results)
+      setPreview(null)
+      setDownloaded(null)
     } catch (e) {
       const err = e as ApiError
       if (!handleAuthError(err.status, err.code)) setError({ message: err.message, code: err.code, details: err.details })
@@ -178,18 +280,49 @@ export default function BbntForm() {
     }
   }
 
-  // Chọn tab khác trong file order -> tính lại ngay
-  function pickTab(tab: string) {
-    setOrderTab(tab)
+  // Tải 1 trong các BBNT đã tách — gọi lại /generate bình thường với đúng tab + tên chương trình của BBNT đó
+  async function downloadSplitResult(r: PreviewOut) {
+    if (!token) return
+    const tab = r.order_tab ?? ""
+    setDownloadingTab(tab)
+    setError(null)
+    try {
+      const req = buildRequest(tab, "auto")
+      req.campaign_name = r.campaign_name || campaign.trim()
+      setDownloaded(await generateBbnt(token, req))
+    } catch (e) {
+      const err = e as ApiError
+      if (!handleAuthError(err.status, err.code)) setError({ message: err.message, code: err.code, details: err.details })
+    } finally {
+      setDownloadingTab(null)
+    }
+  }
+
+  // Chọn "theo brand"/"theo camp" — KHÔNG dùng touch() vì touch() reset luôn breakdownMode về null
+  function pickBreakdownMode(m: BreakdownMode) {
+    setBreakdownMode(m)
     setPreview(null)
+    setError(null)
     setDownloaded(null)
-    void run("preview", tab)
+    setCampSources(null)
+    setCampNames({})
   }
 
   function addMonth() {
     if (!monthInput) return
     const p = monthToPeriod(monthInput)
     touch(setMonths)([...new Set([...months, p])].sort((a, b) => periodToMonth(a).localeCompare(periodToMonth(b))))
+  }
+
+  function addExtraOrderUrl() {
+    const u = extraOrderInput.trim()
+    if (!u || !SHEET_RE.test(u)) return
+    if (u === orderUrl.trim() || extraOrderUrls.includes(u)) {
+      setExtraOrderInput("")
+      return
+    }
+    touch(setExtraOrderUrls)([...extraOrderUrls, u])
+    setExtraOrderInput("")
   }
 
   // ---------------------------------------------------------------- render
@@ -280,6 +413,53 @@ export default function BbntForm() {
           )}
         </fieldset>
 
+        {needsBreakdownChoice && (
+          <fieldset>
+            <legend>Tách bảng doanh thu</legend>
+            <p className="hint">
+              Nghiệm thu gộp nhiều brand/cả group cùng lúc — chọn cách tách bảng doanh thu ước tính, doanh thu thực
+              nhận, tỷ lệ huỷ đơn. Hoa hồng vẫn tính chung cho toàn bộ BBNT dù chọn cách nào.
+            </p>
+            <div className="tabs">
+              <button
+                className={breakdownMode === "brand" ? "on" : ""}
+                type="button"
+                onClick={() => pickBreakdownMode("brand")}
+              >
+                Theo brand
+              </button>
+              <button
+                className={breakdownMode === "camp" ? "on" : ""}
+                type="button"
+                onClick={() => pickBreakdownMode("camp")}
+              >
+                Theo camp
+              </button>
+            </div>
+            {breakdownMode === "camp" && campSources === null && (
+              <p className="hint">Bấm "Xem trước" để portal liệt kê các tab/link cần đặt tên camp.</p>
+            )}
+            {breakdownMode === "camp" && campSources && (
+              <div className="camp-names">
+                <p className="hint">Đặt tên camp riêng cho từng tab/link bên dưới (bắt buộc, không được trùng nhau).</p>
+                {campSources.map((s) => (
+                  <label key={campKey(s.link_index, s.tab)}>
+                    {s.link_index === 0 ? "Link chính" : `Link phụ #${s.link_index}`} · tab {s.tab}
+                    <input
+                      value={campNames[campKey(s.link_index, s.tab)] ?? ""}
+                      onChange={(e) =>
+                        setCampNames((n) => ({ ...n, [campKey(s.link_index, s.tab)]: e.target.value }))
+                      }
+                      placeholder="VD: Camp Mix"
+                      maxLength={100}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </fieldset>
+        )}
+
         <fieldset>
           <legend>Kỳ nghiệm thu</legend>
           <div className="row tight">
@@ -320,6 +500,33 @@ export default function BbntForm() {
             chọn tab theo tên brand / tên chương trình, sai thì đổi tab ở phần kết quả.
           </span>
         </label>
+
+        {extraOrderUrls.length > 0 && (
+          <div className="chips">
+            {extraOrderUrls.map((u, i) => (
+              <span key={u} className="chip" title={u}>
+                Link order #{i + 2}
+                <button
+                  type="button"
+                  aria-label={`Bỏ link order #${i + 2}`}
+                  onClick={() => touch(setExtraOrderUrls)(extraOrderUrls.filter((x) => x !== u))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="row tight">
+          <input
+            value={extraOrderInput}
+            onChange={(e) => setExtraOrderInput(e.target.value)}
+            placeholder="Dán thêm link order nữa để gộp chung 1 BBNT (nếu dữ liệu nằm rải trên nhiều file)"
+          />
+          <button type="button" onClick={addExtraOrderUrl}>
+            Thêm link
+          </button>
+        </div>
 
         <details>
           <summary>Tuỳ chọn thêm</summary>
@@ -389,17 +596,91 @@ export default function BbntForm() {
 
       <section className="result">
         {error && (
-          <ErrorBox error={error} onPickContract={(no) => touch(setContractNo)(no)} onPickTab={pickTab} />
+          <ErrorBox
+            error={error}
+            onPickContract={(no) => touch(setContractNo)(no)}
+            onPickTab={pickTab}
+            onCombine={runCombine}
+            onStartSplit={startSplit}
+          />
         )}
+
+        {splitTabs && !splitResults && (
+          <div className="card">
+            <h3>Tách thành nhiều BBNT riêng</h3>
+            <p className="hint">
+              Mỗi tab bên dưới sẽ thành 1 BBNT riêng — bắt buộc nhập Tên chương trình RIÊNG, khác nhau cho từng tab (số
+              BBNT không phân biệt theo tên chương trình nên mỗi BBNT tách ra sẽ tự thêm hậu tố -R1, -R2…).
+            </p>
+            {splitTabs.map((t) => (
+              <label key={t}>
+                {t}
+                <input
+                  value={splitNames[t] ?? ""}
+                  onChange={(e) => setSplitNames((n) => ({ ...n, [t]: e.target.value }))}
+                  placeholder="VD: BDAY đợt 1"
+                  maxLength={100}
+                />
+              </label>
+            ))}
+            <div className="actions">
+              <button
+                className="primary"
+                disabled={busy === "split" || splitTabs.some((t) => !(splitNames[t] ?? "").trim())}
+                onClick={runSplit}
+              >
+                {busy === "split" ? "Đang tính…" : "Xem trước tách"}
+              </button>
+              <button type="button" onClick={() => setSplitTabs(null)}>
+                Huỷ
+              </button>
+            </div>
+          </div>
+        )}
+
         {downloaded && <p className="alert ok">Đã tải BBNT {downloaded}. Nhớ cất file vào thư mục Drive chung.</p>}
-        {preview ? <PreviewCard p={preview} onPickTab={pickTab} busy={!!busy} /> : !error && <p className="muted">Điền form rồi bấm Xem trước để kiểm tra số liệu trước khi tải.</p>}
+
+        {splitResults ? (
+          <div className="split-results">
+            <p className="hint">{splitResults.length} BBNT tách riêng theo tab — tải từng cái một.</p>
+            {splitResults.map((r) => (
+              <PreviewCard
+                key={r.order_tab ?? r.bbnt_number}
+                p={r}
+                onPickTab={() => {}}
+                busy={downloadingTab !== null}
+                onDownload={() => downloadSplitResult(r)}
+                downloading={downloadingTab === (r.order_tab ?? "")}
+                selectableTabs={false}
+              />
+            ))}
+          </div>
+        ) : preview ? (
+          <PreviewCard p={preview} onPickTab={pickTab} busy={!!busy} />
+        ) : (
+          !error && !splitTabs && <p className="muted">Điền form rồi bấm Xem trước để kiểm tra số liệu trước khi tải.</p>
+        )}
       </section>
     </div>
   )
 }
 
 // =========================================================================== kết quả
-function PreviewCard({ p, onPickTab, busy }: { p: PreviewOut; onPickTab: (tab: string) => void; busy: boolean }) {
+function PreviewCard({
+  p,
+  onPickTab,
+  busy,
+  onDownload,
+  downloading,
+  selectableTabs = true,
+}: {
+  p: PreviewOut
+  onPickTab: (tab: string) => void
+  busy: boolean
+  onDownload?: () => void
+  downloading?: boolean
+  selectableTabs?: boolean
+}) {
   const f = p.figures
   const byCode = p.warnings.reduce<Record<string, number>>((acc, w) => ((acc[w.code] = (acc[w.code] ?? 0) + 1), acc), {})
   return (
@@ -434,7 +715,7 @@ function PreviewCard({ p, onPickTab, busy }: { p: PreviewOut; onPickTab: (tab: s
           <tr>
             <th>File order</th>
             <td>
-              {p.order_tabs.length > 1 ? (
+              {selectableTabs && p.order_tabs.length > 1 ? (
                 <select value={p.order_tab ?? ""} disabled={busy} onChange={(e) => onPickTab(e.target.value)}>
                   {p.order_tabs.map((t) => (
                     <option key={t} value={t}>
@@ -442,6 +723,8 @@ function PreviewCard({ p, onPickTab, busy }: { p: PreviewOut; onPickTab: (tab: s
                     </option>
                   ))}
                 </select>
+              ) : p.order_tabs_combined.length > 1 ? (
+                <>gộp {p.order_tabs_combined.length} tab: {p.order_tabs_combined.join(", ")}</>
               ) : (
                 <>tab {p.order_tab}</>
               )}{" "}
@@ -457,20 +740,20 @@ function PreviewCard({ p, onPickTab, busy }: { p: PreviewOut; onPickTab: (tab: s
         </tbody>
       </table>
 
-      <table className="figures">
-        <tbody>
-          <tr><th>(A) Doanh thu ước tính</th><td>{vnd(f.gmv_estimated)}</td></tr>
-          <tr><th>(B) Doanh thu thực nhận — đơn Đã giao</th><td>{vnd(f.nmv)}</td></tr>
-          <tr><th>Tỷ lệ huỷ đơn</th><td>{pct(f.cancellation_rate)}</td></tr>
-          <tr><th>Hoa hồng {pct(f.commission_rate)}</th><td>{vnd(f.commission_amount)}</td></tr>
-          {f.tax_mode === "VAT_ADD" && <tr><th>{f.tax_label}</th><td>+ {vnd(f.vat_amount)}</td></tr>}
-          {f.tax_mode === "TAX_DEDUCT" && <tr><th title={f.tax_label}>Khấu trừ {pct(f.tax_rate)}</th><td>− {vnd(f.tax_deduction_amount)}</td></tr>}
-          {Number(f.collected_on_behalf) > 0 && <tr><th>Thu hộ</th><td>− {vnd(f.collected_on_behalf)}</td></tr>}
-          {Number(f.consulting_fee) > 0 && <tr><th>Phí tư vấn</th><td>+ {vnd(f.consulting_fee)}</td></tr>}
-          <tr className="total"><th>Tổng thanh toán</th><td>{vnd(f.total_payable)}</td></tr>
-        </tbody>
-      </table>
+      <SummaryTable f={f} />
       <p className="muted words">Bằng chữ: {f.total_payable_words}</p>
+
+      {p.breakdown_kind !== "none" && p.brand_breakdown.length > 0 && (
+        <BreakdownTable kind={p.breakdown_kind} rows={p.brand_breakdown} />
+      )}
+
+      {onDownload && (
+        <div className="actions">
+          <button className="primary" disabled={!!downloading} onClick={onDownload}>
+            {downloading ? "Đang tạo file…" : "Tải BBNT này (.docx)"}
+          </button>
+        </div>
+      )}
 
       <h3>Sản phẩm ({p.items.length})</h3>
       <table className="items">
@@ -506,6 +789,108 @@ function PreviewCard({ p, onPickTab, busy }: { p: PreviewOut; onPickTab: (tab: s
   )
 }
 
+// Bảng tổng hợp doanh thu & thanh toán — luôn hiện ở mọi lần xem trước (kể cả chỉ có 1 BBNT). Chữ cái ở cột
+// "Ghi chú" khớp đúng công thức tính tổng tiền brand cần thanh toán thêm: E = A + B − C − D + F.
+function SummaryTable({ f }: { f: PreviewOut["figures"] }) {
+  return (
+    <table className="summary">
+      <thead>
+        <tr>
+          <th>Hạng mục</th>
+          <th>Số tiền</th>
+          <th>Ghi chú</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>GMV from HRV</td>
+          <td>{vnd(f.gmv_estimated)}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td>Cancellation</td>
+          <td>{pct(f.cancellation_rate)}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td>NMV</td>
+          <td>{vnd(f.nmv)}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td>Tổng Commission được hưởng (chưa VAT) ({pct(f.commission_rate)})</td>
+          <td>{vnd(f.commission_amount)}</td>
+          <td>A</td>
+        </tr>
+        <tr>
+          <td>Tiền VAT ({pct(f.tax_rate)})</td>
+          <td>{vnd(f.vat_amount)}</td>
+          <td>B</td>
+        </tr>
+        <tr>
+          <td>Cần trừ thuế ({pct(f.tax_rate)})</td>
+          <td>{vnd(f.tax_deduction_amount)}</td>
+          <td>C</td>
+        </tr>
+        <tr>
+          <td>Số tiền thu hộ brand</td>
+          <td>{vnd(f.collected_on_behalf)}</td>
+          <td>D</td>
+        </tr>
+        <tr>
+          <td>Phí tư vấn</td>
+          <td>{vnd(f.consulting_fee)}</td>
+          <td>F</td>
+        </tr>
+        <tr className="total">
+          <td>Tổng tiền brand cần thanh toán thêm</td>
+          <td>{vnd(f.total_payable)}</td>
+          <td>E</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan={3} className="muted">
+            E = A + B − C − D + F
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  )
+}
+
+// Bảng tách doanh thu ước tính/thực nhận/tỷ lệ huỷ theo brand hoặc theo camp — chỉ hiển thị khi breakdown_kind !==
+// "none" (chọn breakdown_mode, hoặc link order tự nhận diện "1 tab/brand"). Hoa hồng/VAT/thanh toán KHÔNG tách —
+// xem bảng tổng hợp phía trên, dòng hint nhắc lại điều này.
+function BreakdownTable({ kind, rows }: { kind: "brand" | "camp"; rows: PreviewOut["brand_breakdown"] }) {
+  return (
+    <div>
+      <h3>Tách theo {kind === "camp" ? "camp" : "brand"}</h3>
+      <table className="breakdown">
+        <thead>
+          <tr>
+            <th>{kind === "camp" ? "Camp" : "Brand"}</th>
+            <th>GMV ước tính</th>
+            <th>NMV</th>
+            <th>Tỷ lệ huỷ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((x) => (
+            <tr key={x.index}>
+              <td>{x.brand_name}</td>
+              <td>{vnd(x.gmv_estimated)}</td>
+              <td>{vnd(x.nmv)}</td>
+              <td>{pct(x.cancellation_rate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="hint">Hoa hồng/VAT/khấu trừ/tổng thanh toán tính chung trên TOÀN BỘ (xem bảng tổng hợp bên trên).</p>
+    </div>
+  )
+}
+
 const LABELS: Record<string, string> = {
   RETURNED: "hoàn",
   CANCELLED: "huỷ",
@@ -537,12 +922,17 @@ function ErrorBox({
   error,
   onPickContract,
   onPickTab,
+  onCombine,
+  onStartSplit,
 }: {
   error: Shown
   onPickContract: (no: string) => void
   onPickTab: (tab: string) => void
+  onCombine: () => void
+  onStartSplit: (tabs: string[]) => void
 }) {
   const d = error.details as { contracts?: ContractChoice[]; mappings?: string[]; tabs?: string[] } | RowIssue[] | undefined
+  const ambiguous = error.code === "ORDER_TAB_AMBIGUOUS"
   return (
     <div className="alert error">
       <strong>{error.message}</strong>
@@ -571,18 +961,30 @@ function ErrorBox({
         </p>
       )}
       {!Array.isArray(d) && d?.tabs && d.tabs.length > 0 && (
-        <ul>
-          {d.tabs.map((t) => (
-            <li key={t}>
-              {t}{" "}
-              {error.code !== "MAPPING_MISMATCH" && (
-                <button className="link" onClick={() => onPickTab(t)}>
-                  Dùng tab này
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul>
+            {d.tabs.map((t) => (
+              <li key={t}>
+                {t}{" "}
+                {error.code !== "MAPPING_MISMATCH" && (
+                  <button className="link" onClick={() => onPickTab(t)}>
+                    Dùng tab này
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {ambiguous && (
+            <p className="actions">
+              <button type="button" onClick={onCombine}>
+                Gộp tất cả thành 1 BBNT
+              </button>
+              <button type="button" onClick={() => onStartSplit(d.tabs!)}>
+                Tách thành nhiều BBNT riêng
+              </button>
+            </p>
+          )}
+        </>
       )}
     </div>
   )
