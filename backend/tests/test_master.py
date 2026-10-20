@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from app.core.calculation import TaxMode
-from app.core.numbering import normalize_months
 from app.errors import BbntError
 from app.master.index import find_contract, find_mapping, resolve_scope
 from app.master.repository import MasterRepository, build_master
@@ -46,10 +45,6 @@ def contract_row(**over: Any) -> dict[str, Any]:
             "% hoa hồng": "20%", "Hiệu lực từ": "01/01/2026", "Tên Bên A": "CÔNG TY TEST", "MST": "0312345678"}
     base.update(over)
     return base
-
-
-def months(*m: str) -> tuple[Any, ...]:
-    return normalize_months(m)
 
 
 # =========================================================================== loader
@@ -204,70 +199,72 @@ class TestScope:
 
 
 class TestFindContract:
-    def test_brand_contract_any_channel(self, master_tables):
+    """``find_contract`` LUÔN cần ``contract_no`` tường minh — không còn tự suy luận theo kỳ nghiệm thu (đã bỏ
+    hẳn khái niệm kỳ nghiệm thu); chỉ còn kiểm tra hợp đồng đó CÓ áp dụng cho pháp nhân/kênh/phạm vi hay không,
+    hoàn toàn không xét ngày hiệu lực."""
+
+    def test_brand_contract_matches_any_channel(self, master_tables):
         m = build_master(master_tables)
         for ch in ("FB", "TTS"):
-            c = find_contract(m, "EZS", resolve_scope(m, ch, ["ORGANICA"]), months("05.26"))
+            c = find_contract(m, "EZS", resolve_scope(m, ch, ["ORGANICA"]), "01/2026/HĐDV/EZS-ORGANICA")
             assert c.contract_no == "01/2026/HĐDV/EZS-ORGANICA"
 
-    def test_single_brand_falls_back_to_group_contract(self, master_tables):
+    def test_single_brand_matches_group_contract(self, master_tables):
         m = build_master(master_tables)
-        c = find_contract(m, "SASSY", resolve_scope(m, "FB", ["ANESSA"]), months("07.26"))
+        c = find_contract(m, "SASSY", resolve_scope(m, "FB", ["ANESSA"]), "05/2026/HĐDV/SS-SHISEIDO")
         assert c.group_code == "SHISEIDO_GRP"
 
-    def test_brand_contract_beats_group_and_channel_beats_blank(self, master_tables):
+    def test_contract_no_resolves_exact_match_regardless_of_other_candidates(self, master_tables):
         add_row(master_tables, "HOP_DONG", **contract_row(**{"Số hợp đồng": "ANESSA-RIENG", "Pháp nhân": "SASSY",
                                                               "Mã brand": "ANESSA"}))
         add_row(master_tables, "HOP_DONG", **contract_row(**{"Số hợp đồng": "ORG-FB", "Kênh": "FB"}))
         m = build_master(master_tables)
-        assert find_contract(m, "SASSY", resolve_scope(m, "FB", ["ANESSA"]), months("07.26")).contract_no \
+        assert find_contract(m, "SASSY", resolve_scope(m, "FB", ["ANESSA"]), "ANESSA-RIENG").contract_no \
             == "ANESSA-RIENG"
-        assert find_contract(m, "EZS", resolve_scope(m, "FB", ["ORGANICA"]), months("05.26")).contract_no == "ORG-FB"
-        assert find_contract(m, "EZS", resolve_scope(m, "TTS", ["ORGANICA"]), months("05.26")).contract_no \
-            == "01/2026/HĐDV/EZS-ORGANICA"
-
-    def test_period_errors(self, master_tables):
-        m = build_master(master_tables)
-        scope = resolve_scope(m, "FB", ["ORGANICA"])
+        assert find_contract(m, "SASSY", resolve_scope(m, "FB", ["ANESSA"]),
+                             "05/2026/HĐDV/SS-SHISEIDO").group_code == "SHISEIDO_GRP"
+        assert find_contract(m, "EZS", resolve_scope(m, "FB", ["ORGANICA"]), "org-fb").contract_no == "ORG-FB"
+        assert find_contract(m, "EZS", resolve_scope(m, "TTS", ["ORGANICA"]),
+                             "01/2026/HĐDV/EZS-ORGANICA").contract_no == "01/2026/HĐDV/EZS-ORGANICA"
+        # ORG-FB chỉ ghi kênh FB -> không áp dụng cho scope TTS
         with pytest.raises(BbntError) as e:
-            find_contract(m, "EZS", scope, months("12.25"))
-        assert e.value.code == "CONTRACT_PERIOD_MISMATCH"
-        with pytest.raises(BbntError) as e:
-            find_contract(m, "EZS", scope, months("12.26", "01.27"))
-        assert e.value.code == "CONTRACT_PERIOD_MISMATCH"
-        with pytest.raises(BbntError) as e:
-            find_contract(m, "SASSY", scope, months("05.26"))
+            find_contract(m, "EZS", resolve_scope(m, "TTS", ["ORGANICA"]), "ORG-FB")
         assert e.value.code == "CONTRACT_NOT_FOUND"
 
-    def test_rate_change_inside_period_requires_split(self, master_tables):
+    def test_unknown_or_mismatched_contract_no_rejected(self, master_tables):
+        m = build_master(master_tables)
+        scope = resolve_scope(m, "FB", ["ORGANICA"])
+        with pytest.raises(BbntError, match="không có") as e:
+            find_contract(m, "EZS", scope, "KHONG-TON-TAI")
+        assert e.value.code == "CONTRACT_NOT_FOUND"
+        with pytest.raises(BbntError, match="không có") as e:
+            find_contract(m, "SASSY", scope, "01/2026/HĐDV/EZS-ORGANICA")   # đúng số nhưng sai pháp nhân/scope
+        assert e.value.code == "CONTRACT_NOT_FOUND"
+
+    def test_contract_no_lets_user_pick_rate_manually_no_date_check(self, master_tables):
+        """Không còn tự suy luận theo ngày hiệu lực — 2 hợp đồng cùng scope, khác % hoa hồng, khác khoảng ngày
+        hiệu lực (kể cả vắt qua nhau) đều tự chọn được thẳng qua ``contract_no``, không báo lỗi chồng kỳ."""
         set_cell(master_tables, "HOP_DONG", 2, "Hiệu lực đến", "30/06/2026")
         add_row(master_tables, "HOP_DONG", **contract_row(**{"Số hợp đồng": "PL01", "Hiệu lực từ": "01/07/2026",
                                                               "% hoa hồng": "20%"}))
         m = build_master(master_tables)
         scope = resolve_scope(m, "FB", ["ORGANICA"])
-        assert find_contract(m, "EZS", scope, months("06.26")).commission_rate == Decimal("0.18")
-        assert find_contract(m, "EZS", scope, months("07.26")).commission_rate == Decimal("0.20")
-        with pytest.raises(BbntError) as e:
-            find_contract(m, "EZS", scope, months("06.26", "07.26"))
-        assert e.value.code == "CONTRACT_SPLIT_PERIOD" and len(e.value.details["contracts"]) == 2
+        assert find_contract(m, "EZS", scope, "01/2026/HĐDV/EZS-ORGANICA").commission_rate == Decimal("0.18")
+        assert find_contract(m, "EZS", scope, "PL01").commission_rate == Decimal("0.20")
 
-    def test_ambiguous_then_pick_by_number(self, master_tables):
-        add_row(master_tables, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-2"}))
+    def test_duplicate_contract_no_in_master_is_ambiguous(self, master_tables):
+        add_row(master_tables, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-DUP"}))
+        add_row(master_tables, "HOP_DONG", **contract_row(**{"Số hợp đồng": "HD-DUP", "% hoa hồng": "25%"}))
         m = build_master(master_tables)
-        scope = resolve_scope(m, "FB", ["ORGANICA"])
         with pytest.raises(BbntError) as e:
-            find_contract(m, "EZS", scope, months("05.26"))
-        assert e.value.code == "CONTRACT_AMBIGUOUS"
-        assert {c["contract_no"] for c in e.value.details["contracts"]} == {"01/2026/HĐDV/EZS-ORGANICA", "HD-2"}
-        assert find_contract(m, "EZS", scope, months("05.26"), "hd-2").contract_no == "HD-2"
-        with pytest.raises(BbntError, match="không có"):
-            find_contract(m, "EZS", scope, months("05.26"), "05/2026/HĐDV/SS-SHISEIDO")
+            find_contract(m, "EZS", resolve_scope(m, "FB", ["ORGANICA"]), "HD-DUP")
+        assert e.value.code == "CONTRACT_AMBIGUOUS" and len(e.value.details["contracts"]) == 2
 
     def test_inactive_contract_ignored(self, master_tables):
         set_cell(master_tables, "HOP_DONG", 2, "Trạng thái", "Hết hạn")
         m = build_master(master_tables)
-        with pytest.raises(BbntError, match="Chưa có hợp đồng"):
-            find_contract(m, "EZS", resolve_scope(m, "FB", ["ORGANICA"]), months("05.26"))
+        with pytest.raises(BbntError, match="không có"):
+            find_contract(m, "EZS", resolve_scope(m, "FB", ["ORGANICA"]), "01/2026/HĐDV/EZS-ORGANICA")
 
 
 class TestFindMapping:

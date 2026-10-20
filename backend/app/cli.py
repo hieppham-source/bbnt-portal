@@ -2,8 +2,9 @@
 CLI vận hành / chạy tay không cần web (Render › Shell, hoặc máy local).
 
     python -m app.cli check                          # cấu hình, Sheet master (dòng lỗi), template
-    python -m app.cli generate --entity EZS --channel FB --brand ORGANICA --period 05.26 --campaign BDAY \\
-        --order-url "https://docs.google.com/spreadsheets/d/.../edit#gid=0" --out ./out
+    python -m app.cli generate --entity EZS --channel FB --brand ORGANICA --suffix "BDAY 05" \\
+        --campaign BDAY --contract HD-001 --order-url "https://docs.google.com/spreadsheets/d/.../edit#gid=0" \\
+        --out ./out
     # Không cần Google: Sheet master + file order tải về dạng .xlsx
     python -m app.cli generate --master-file deploy/MASTER_BBNT_TEMPLATE.xlsx --order-file order.xlsx ...
 
@@ -112,9 +113,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
         master = _load_master(args.master_file)
         templates = TemplateRegistry(args.templates_dir or (DEFAULT_TEMPLATES_DIR if args.master_file
                                                             else get_settings().templates_dir))
-        inp = BbntInput(channel=args.channel, entity=args.entity, period_months=args.period,
-                        campaign_name=args.campaign, brand_codes=args.brand, group_code=args.group,
-                        contract_no=args.contract, mapping_code=args.mapping,
+        inp = BbntInput(channel=args.channel, entity=args.entity, bbnt_suffix=args.suffix,
+                        campaign_name=args.campaign, contract_no=args.contract,
+                        brand_codes=args.brand, group_code=args.group, mapping_code=args.mapping,
                         collected_on_behalf=Decimal(args.collected_on_behalf),
                         consulting_fee=Decimal(args.consulting_fee), strip_comments=args.strip_comments,
                         order_tab=args.order_tab)
@@ -166,9 +167,9 @@ def main(argv: list[str] | None = None) -> int:
     scope = g.add_mutually_exclusive_group(required=True)
     scope.add_argument("--brand", action="append", help="Lặp lại để gộp nhiều brand cùng group")
     scope.add_argument("--group")
-    g.add_argument("--period", action="append", required=True, help="05.26 — lặp lại cho nhiều tháng")
+    g.add_argument("--suffix", required=True, help='Đuôi biên bản nghiệm thu, vd "BDAY 05"')
     g.add_argument("--campaign", required=True)
-    g.add_argument("--contract", help="Số hợp đồng (khi có nhiều hợp đồng cùng hiệu lực)")
+    g.add_argument("--contract", required=True, help="Số hợp đồng — luôn bắt buộc, tự chọn (không tự suy luận)")
     g.add_argument("--mapping")
     g.add_argument("--order-url")
     g.add_argument("--order-file")

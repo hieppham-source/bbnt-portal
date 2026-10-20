@@ -107,7 +107,7 @@ def to_preview(r: BbntResult) -> PreviewResponse:
     assert r.number.issue_date is not None
     return PreviewResponse(
         bbnt_number=str(r.number), file_name=download_filename(str(r.number)), issue_date=r.number.issue_date,
-        period_label=r.number.period_label, program_name=r.program, campaign_name=r.campaign_name,
+        bbnt_suffix=r.number.suffix, program_name=r.program, campaign_name=r.campaign_name,
         scope_code=r.scope.code, brands=[b.code for b in r.scope.brands], mapping_code=r.mapping.code,
         contract=ContractOut(contract_no=k.contract_no, scope=k.scope_label, channel=k.channel, model=k.model,
                              commission_rate=k.commission_rate, valid_from=k.valid_from, valid_to=k.valid_to,

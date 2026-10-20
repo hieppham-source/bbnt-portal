@@ -27,7 +27,7 @@ ORGANICA = [BrandRef("ORGANICA")]
 
 
 def gen(**kw):
-    base = dict(brands=ORGANICA, entity="EZS", channel="FB", period_months=["05.26"],
+    base = dict(brands=ORGANICA, entity="EZS", channel="FB", suffix="BDAY 05",
                 issued_at=datetime(2026, 6, 10, 3, 0, tzinfo=UTC))
     base.update(kw)
     return generate_bbnt_number(**base)
@@ -109,9 +109,9 @@ class TestIssueMonthTimezone:
             issue_month_of(datetime(2026, 5, 31, 23, 0))
 
     def test_clock_injection_used_when_issued_at_missing(self):
-        n = generate_bbnt_number(brands=ORGANICA, entity="EZS", channel="FB", period_months=["05.26"],
+        n = generate_bbnt_number(brands=ORGANICA, entity="EZS", channel="FB", suffix="BDAY 05",
                                  clock=lambda: datetime(2026, 5, 31, 17, 1, tzinfo=UTC))
-        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05"
         assert n.issue_date == date(2026, 6, 1)   # ngày VN, không phải 31/05 UTC
 
     def test_issue_date_is_vn_date(self):
@@ -121,34 +121,36 @@ class TestIssueMonthTimezone:
 
 # --------------------------------------------------------------------------- GENERATE
 class TestGenerate:
-    def test_issue_month_is_not_period_month(self):
-        n = gen(period_months=["05.26"], issued_at=datetime(2026, 7, 2, 2, 0, tzinfo=UTC))
-        assert str(n) == "07.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+    def test_issue_month_independent_of_suffix(self):
+        """Tháng lập chỉ phụ thuộc issued_at — suffix là chữ người làm tự gõ, không ràng buộc gì với tháng."""
+        n = gen(suffix="BDAY 01", issued_at=datetime(2026, 7, 2, 2, 0, tzinfo=UTC))
+        assert str(n) == "07.26/BBNT-ORGANICA-EZ-FB-BDAY-01"
 
     def test_full_examples(self):
         shiseido = [BrandRef("SHISEIDO", "SHISEIDO_GRP"), BrandRef("CLE_DE_PEAU", "SHISEIDO_GRP")]
-        n = gen(brands=shiseido, entity="SASSY", channel="TTS", period_months=["07.26", "09.26", "08.26"],
+        n = gen(brands=shiseido, entity="SASSY", channel="TTS", suffix="q3 camp",
                 issued_at=datetime(2026, 10, 1, 1, 0, tzinfo=UTC))
-        assert str(n) == "10.26/BBNT-SHISEIDO_GRP-SS-TTS-CAMP-07-09.26"
-        assert n.business_key == "BBNT-SHISEIDO_GRP-SS-TTS-CAMP-07-09.26"
-        assert n.scope_prefix == "BBNT-SHISEIDO_GRP-SS-TTS-CAMP-"
+        assert str(n) == "10.26/BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP"
+        assert n.business_key == "BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP"
+        assert n.scope_prefix == "BBNT-SHISEIDO_GRP-SS-TTS-"
 
-    def test_issue_same_month_as_period_allowed(self):
-        assert str(gen(period_months=["06.26"])) == "06.26/BBNT-ORGANICA-EZ-FB-CAMP-06.26"
+    def test_suffix_is_normalized(self):
+        n = gen(suffix="  bday   05  ")
+        assert n.suffix == "BDAY-05"
+        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05"
 
-    def test_period_after_issue_month_rejected(self):
-        with pytest.raises(NumberingError, match="sau tháng lập"):
-            gen(period_months=["05.26", "07.26"])        # lập 06.26
+    def test_blank_suffix_rejected(self):
+        with pytest.raises(NumberingError):
+            gen(suffix="   ")
 
-    def test_period_after_issue_month_across_timezone(self):
-        # 31/05 UTC 18:00 = 01/06 VN -> kỳ 06.26 hợp lệ dù theo UTC vẫn là tháng 5
-        n = gen(period_months=["06.26"], issued_at=datetime(2026, 5, 31, 18, 0, tzinfo=UTC))
-        assert n.issue_month.label == "06.26"
+    def test_suffix_too_long_rejected(self):
+        with pytest.raises(NumberingError):
+            gen(suffix="A" * 61)
 
     def test_revision_suffix(self):
         n = gen().with_revision(2)
-        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26-R2"
-        assert n.business_key == "BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05-R2"
+        assert n.business_key == "BBNT-ORGANICA-EZ-FB-BDAY-05"
 
     def test_negative_revision_rejected(self):
         with pytest.raises(NumberingError):
@@ -205,24 +207,23 @@ class TestScopeEntityChannel:
 # --------------------------------------------------------------------------- PARSE
 class TestParseNumber:
     @pytest.mark.parametrize("value", [
-        "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26",
-        "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26-R1",
-        "10.26/BBNT-SHISEIDO_GRP-SS-TTS-CAMP-07-09.26",
-        "10.26/BBNT-SHISEIDO_GRP-SS-TTS-CAMP-07-09.26-R12",
-        "10.26/BBNT-X-EZ-FB-CAMP-05,07,09.26",
-        "02.26/BBNT-X-EZ-FB-CAMP-11.25-01.26",
-        "02.26/BBNT-X-EZ-FB-CAMP-11.25-01.26-R3",
-        "02.26/BBNT-X-EZ-FB-CAMP-10.25,12.25,01.26",
+        "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05",
+        "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05-R1",
+        "10.26/BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP",
+        "10.26/BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP-R12",
+        "10.26/BBNT-X-EZ-FB-05-07-09",
+        "02.26/BBNT-X-EZ-FB-A",
+        "02.26/BBNT-X-EZ-FB-A-R3",
     ])
     def test_roundtrip(self, value):
         assert str(parse_bbnt_number(value)) == value
 
     @pytest.mark.parametrize("value", [
-        "6.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26",
-        "06.26/BBNT-ORGANICA-EZ-FB-05.26",
-        "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26-R0",
-        "06.26/BBNT-ORGANICA-EZ-FB-CAMP-07,05.26",
-        "06.26/BNT-ORGANICA-EZ-FB-CAMP-05.26",
+        "6.26/BBNT-ORGANICA-EZ-FB-BDAY-05",
+        "06.26/BBNT-ORGANICA-EZ-FB-",
+        "06.26/BBNT-ORGANICA-EZ-FB-bday-05",
+        "06.26/BBNT-ORGANICA-EZ-FB-BDAY--05",
+        "06.26/BNT-ORGANICA-EZ-FB-BDAY-05",
     ])
     def test_rejects(self, value):
         with pytest.raises(NumberingError):
@@ -230,14 +231,13 @@ class TestParseNumber:
 
     def test_generated_numbers_always_parse(self):
         """Property-style: mọi tổ hợp sinh ra đều parse ngược đúng."""
-        months_pool = ["10.25", "11.25", "12.25", "01.26", "02.26", "04.26"]
+        suffix_pool = ["BDAY 01", "Q3 CAMP", "DOT-2", "MIX FOOD 09"]
         issued = datetime(2026, 5, 1, tzinfo=UTC)
-        for r in range(1, 4):
-            for combo in itertools.combinations(months_pool, r):
-                for entity, channel in itertools.product(["EZS", "SASSY"], ["FB", "TTS"]):
-                    n = gen(period_months=combo, entity=entity, channel=channel, issued_at=issued)
-                    back = parse_bbnt_number(str(n))
-                    assert back == n and str(back) == str(n)
+        for suffix in suffix_pool:
+            for entity, channel in itertools.product(["EZS", "SASSY"], ["FB", "TTS"]):
+                n = gen(suffix=suffix, entity=entity, channel=channel, issued_at=issued)
+                back = parse_bbnt_number(str(n))
+                assert back == n and str(back) == str(n)
 
 
 def test_bbnt_number_is_hashable_value_object():

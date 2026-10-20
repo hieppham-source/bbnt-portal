@@ -3,20 +3,22 @@ BBNT Numbering Engine.
 
 Format::
 
-    MM.YY/BBNT-{BRAND}-{ENTITY}-{CHANNEL}-CAMP-{PERIOD}
+    MM.YY/BBNT-{BRAND}-{ENTITY}-{CHANNEL}-{SUFFIX}
 
-    06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26
-    10.26/BBNT-SHISEIDO_GRP-SS-TTS-CAMP-07-09.26
-    10.26/BBNT-ORGANICA-EZ-FB-CAMP-05,07,09.26
+    06.26/BBNT-ORGANICA-EZ-FB-BDAY-05
+    10.26/BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP
 
 * ``MM.YY``  — tháng/năm LẬP biên bản, quy đổi về ``Asia/Ho_Chi_Minh`` tại thời điểm phát hành.
 * ``BRAND``  — brand code (1 brand) hoặc group brand code (nhiều brand cùng group).
 * ``ENTITY`` — ``EZ`` (EZS) | ``SS`` (SASSY).
 * ``CHANNEL``— ``FB`` | ``TTS``.
-* ``PERIOD`` — tháng nghiệm thu: ``05.26`` | ``07-09.26`` | ``05,07,09.26``.
+* ``SUFFIX`` — "đuôi biên bản nghiệm thu" người làm TỰ GÕ (không suy ra từ kỳ nghiệm thu nữa — link order mặc
+  định tính TOÀN BỘ dòng đơn, không giới hạn theo tháng). Tự do gõ chữ/số/khoảng trắng, portal tự chuẩn hoá
+  (in hoa, gộp khoảng trắng/ký tự lạ liên tiếp thành 1 gạch ngang) qua :func:`normalize_suffix`.
 
-Toàn bộ là hàm thuần (không DB, không I/O). Số BBNT tất định: cùng brand/pháp nhân/kênh/kỳ và cùng tháng lập
--> cùng số, nên tạo lại BBNT (dán lại link order) cho ra đúng số cũ. Tool không lưu BBNT nên không cấp số tăng dần.
+Toàn bộ là hàm thuần (không DB, không I/O). Số BBNT tất định: cùng brand/pháp nhân/kênh/đuôi và cùng tháng lập
+-> cùng số, nên tạo lại BBNT (dán lại link order, gõ lại đúng đuôi cũ) cho ra đúng số cũ. Tool không lưu BBNT
+nên không cấp số tăng dần.
 """
 from __future__ import annotations
 
@@ -29,8 +31,11 @@ from zoneinfo import ZoneInfo
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
-CAMP_TOKEN = "CAMP"
 DOC_TOKEN = "BBNT"
+
+#: Đuôi biên bản nghiệm thu sau chuẩn hoá: A-Z, 0-9, gạch ngang đơn (không ở đầu/cuối).
+_SUFFIX_RE = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*$")
+SUFFIX_MAX_LEN = 60
 
 #: Mã pháp nhân hệ thống -> token ENTITY trong số BBNT (đồng bộ legal_entities.number_code).
 ENTITY_NUMBER_CODES: dict[str, str] = {"EZS": "EZ", "SASSY": "SS"}
@@ -48,6 +53,26 @@ _CODE_RE = re.compile(r"^[A-Z0-9_]+$")
 # =============================================================================
 class NumberingError(ValueError):
     """Input không hợp lệ để đánh số BBNT."""
+
+
+# =============================================================================
+# Đuôi biên bản nghiệm thu (suffix) — người làm tự gõ, thay cho kỳ nghiệm thu cũ
+# =============================================================================
+def normalize_suffix(raw: str) -> str:
+    """Chuẩn hoá "đuôi biên bản nghiệm thu" người dùng tự gõ trước khi ráp vào số BBNT: in hoa, gộp mọi
+    khoảng trắng/ký tự không phải chữ-số liên tiếp thành 1 gạch ngang, bỏ gạch ngang thừa ở đầu/cuối.
+
+    >>> normalize_suffix("  bday dot 1 ")
+    'BDAY-DOT-1'
+    >>> normalize_suffix("Q3-CAMP")
+    'Q3-CAMP'
+    """
+    s = re.sub(r"[^A-Z0-9]+", "-", raw.strip().upper()).strip("-")
+    if not s:
+        raise NumberingError("Đuôi biên bản nghiệm thu không được để trống")
+    if len(s) > SUFFIX_MAX_LEN:
+        raise NumberingError(f"Đuôi biên bản nghiệm thu quá dài ({len(s)} ký tự, tối đa {SUFFIX_MAX_LEN})")
+    return s
 
 
 # =============================================================================
@@ -272,13 +297,14 @@ def resolve_channel_code(channel: str) -> str:
 # =============================================================================
 @dataclass(frozen=True)
 class BbntNumber:
-    """Số BBNT đã phân rã. ``str(number)`` cho ra chuỗi in trên biên bản."""
+    """Số BBNT đã phân rã. ``str(number)`` cho ra chuỗi in trên biên bản. ``suffix`` ("đuôi biên bản nghiệm
+    thu") do người làm TỰ GÕ, đã chuẩn hoá qua :func:`normalize_suffix` — KHÔNG còn suy ra từ kỳ nghiệm thu."""
 
     issue_month: YearMonth
     scope_code: str
     entity_code: str
     channel_code: str
-    period_months: tuple[YearMonth, ...]
+    suffix: str
     revision_no: int = 0
     issue_date: date | None = field(default=None, compare=False)  # ngày lập (VN) — lưu vào DB
 
@@ -287,19 +313,14 @@ class BbntNumber:
             raise NumberingError("revision_no phải >= 0")
 
     @property
-    def period_label(self) -> str:
-        return format_period(self.period_months)
-
-    @property
     def business_key(self) -> str:
         """Phần định danh nghiệp vụ, không phụ thuộc tháng lập — dùng cho unique 'live'."""
-        return "-".join((DOC_TOKEN, self.scope_code, self.entity_code, self.channel_code,
-                         CAMP_TOKEN, self.period_label))
+        return "-".join((DOC_TOKEN, self.scope_code, self.entity_code, self.channel_code, self.suffix))
 
     @property
     def scope_prefix(self) -> str:
-        """``BBNT-{scope}-{entity}-{channel}-CAMP-`` — dùng tìm BBNT cùng scope để kiểm tra chồng tháng."""
-        return "-".join((DOC_TOKEN, self.scope_code, self.entity_code, self.channel_code, CAMP_TOKEN)) + "-"
+        """``BBNT-{scope}-{entity}-{channel}-`` — dùng tìm BBNT cùng scope/pháp nhân/kênh."""
+        return "-".join((DOC_TOKEN, self.scope_code, self.entity_code, self.channel_code)) + "-"
 
     @property
     def lock_key(self) -> str:
@@ -307,8 +328,8 @@ class BbntNumber:
 
     @property
     def value(self) -> str:
-        suffix = f"-R{self.revision_no}" if self.revision_no else ""
-        return f"{self.issue_month.label}/{self.business_key}{suffix}"
+        rev_suffix = f"-R{self.revision_no}" if self.revision_no else ""
+        return f"{self.issue_month.label}/{self.business_key}{rev_suffix}"
 
     def with_revision(self, revision_no: int) -> BbntNumber:
         return replace(self, revision_no=revision_no)
@@ -322,7 +343,7 @@ def generate_bbnt_number(
     brands: Sequence[BrandRef],
     entity: str,
     channel: str,
-    period_months: Iterable[YearMonthLike],
+    suffix: str,
     issued_at: datetime | None = None,
     revision_no: int = 0,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -333,31 +354,26 @@ def generate_bbnt_number(
         brands: Brand tham gia. 1 brand -> brand code; nhiều brand -> group code.
         entity: ``EZS``/``SASSY`` (hoặc ``EZ``/``SS``).
         channel: ``FB``/``TTS``.
-        period_months: Tháng nghiệm thu (xem :meth:`YearMonth.of`), tự dedupe + sort.
+        suffix: "Đuôi biên bản nghiệm thu" người làm tự gõ — chuẩn hoá qua :func:`normalize_suffix`.
         issued_at: Thời điểm phát hành (timezone-aware). Mặc định ``clock()``.
         revision_no: Hậu tố ``-R{n}`` khi phát hành lại.
         clock: Inject để test.
 
     Raises:
-        NumberingError: input sai, datetime naive, hoặc kỳ nghiệm thu nằm SAU tháng lập.
+        NumberingError: input sai hoặc datetime naive.
 
     >>> from datetime import timezone
     >>> str(generate_bbnt_number(brands=[BrandRef("ORGANICA")], entity="EZS", channel="FB",
-    ...     period_months=["05.26"], issued_at=datetime(2026, 5, 31, 17, 30, tzinfo=timezone.utc)))
-    '06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26'
+    ...     suffix="BDAY 05", issued_at=datetime(2026, 5, 31, 17, 30, tzinfo=timezone.utc)))
+    '06.26/BBNT-ORGANICA-EZ-FB-BDAY-05'
     """
     moment_vn = to_vn_time(issued_at if issued_at is not None else clock())
-    issue_month = YearMonth.of(moment_vn)
-    months = normalize_months(period_months)
-    if months[-1] > issue_month:
-        raise NumberingError(
-            f"Tháng nghiệm thu {months[-1].label} nằm sau tháng lập biên bản {issue_month.label}")
     return BbntNumber(
-        issue_month=issue_month,
+        issue_month=YearMonth.of(moment_vn),
         scope_code=resolve_scope_code(brands),
         entity_code=resolve_entity_code(entity),
         channel_code=resolve_channel_code(channel),
-        period_months=months,
+        suffix=normalize_suffix(suffix),
         revision_no=revision_no,
         issue_date=moment_vn.date(),
     )
@@ -365,12 +381,15 @@ def generate_bbnt_number(
 
 _NUMBER_RE = re.compile(
     rf"^(?P<issue>\d{{2}}\.\d{{2}})/{DOC_TOKEN}-(?P<scope>[A-Z0-9_]+)-(?P<entity>[A-Z]{{2,5}})"
-    rf"-(?P<channel>[A-Z0-9]+)-{CAMP_TOKEN}-(?P<period>[0-9.,-]+?)(?:-R(?P<rev>[1-9]\d*))?$"
+    rf"-(?P<channel>[A-Z0-9]+)-(?P<suffix>[A-Z0-9]+(?:-[A-Z0-9]+)*?)(?:-R(?P<rev>[1-9]\d*))?$"
 )
 
 
 def parse_bbnt_number(value: str) -> BbntNumber:
-    """Đảo ngược ``str(BbntNumber)``. Dùng để validate số nhập tay / import dữ liệu cũ."""
+    """Đảo ngược ``str(BbntNumber)``. Dùng để validate số nhập tay / import dữ liệu cũ. KHÔNG dùng trong luồng
+    tạo BBNT (``BbntGenerator`` không gọi hàm này) — suffix tự gõ kết thúc bằng "-R{số}" (vd "ROUND-R1") có thể
+    bị hiểu nhầm thành hậu tố revision khi parse ngược; trường hợp hiếm này chấp nhận được vì chỉ ảnh hưởng tới
+    việc đọc lại 1 số đã có, không ảnh hưởng tới số được SINH ra."""
     m = _NUMBER_RE.fullmatch(value.strip())
     if not m:
         raise NumberingError(f"Số BBNT sai định dạng: {value!r}")
@@ -379,6 +398,6 @@ def parse_bbnt_number(value: str) -> BbntNumber:
         scope_code=m["scope"],
         entity_code=m["entity"],
         channel_code=m["channel"],
-        period_months=parse_period(m["period"]),
+        suffix=m["suffix"],
         revision_no=int(m["rev"] or 0),
     )

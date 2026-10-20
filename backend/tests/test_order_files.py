@@ -93,15 +93,26 @@ def test_unknown_requested_tab_and_no_matching_tab(env):
     assert r.json()["code"] == "MAPPING_MISMATCH" and "đã thử 2 tab" in r.json()["message"]
 
 
-# ----------------------------------------------------------------------------- tab_mode combine/split
-def test_combine_mode_merges_all_candidate_tabs(env):
-    """``tab_mode='combine'`` trên link có nhiều tab mơ hồ (nhiều camp cùng brand) -> gộp TẤT CẢ tab lại thành
-    1 BBNT thay vì báo ``ORDER_TAB_AMBIGUOUS``."""
+# ----------------------------------------------------------------------------- tab_mode split / breakdown_mode=camp
+def test_breakdown_camp_merges_all_candidate_tabs_of_1_brand(env):
+    """Link có nhiều tab mơ hồ (nhiều camp cùng 1 brand) -> ``breakdown_mode='camp'`` gộp TẤT CẢ tab lại thành
+    1 BBNT DUY NHẤT (1 số, 1 hoa hồng chung) thay vì báo ``ORDER_TAB_AMBIGUOUS``, nhưng tách riêng bảng doanh
+    thu + danh sách sản phẩm theo từng camp (đặt tên qua ``camp_names``) — thay cho ``tab_mode='combine'`` cũ,
+    nay đã gộp chung vào 1 luồng duy nhất với tính năng tách bảng (xem docstring ``app.services.generator``)."""
     put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
-    b = env.post("/api/v1/bbnt/preview", {**NO_GID, "tab_mode": "combine"}).json()
+    payload = {**NO_GID, "breakdown_mode": "camp",
+              "camp_names": [{"link_index": 0, "tab": "ORDER 1", "name": "CAMP1"},
+                             {"link_index": 0, "tab": "ORDER 2", "name": "CAMP2"}]}
+    b = env.post("/api/v1/bbnt/preview", payload).json()
     assert Decimal(b["figures"]["nmv"]) == 7_000_000 and Decimal(b["figures"]["gmv_estimated"]) == 12_000_000
     assert b["order_tabs_combined"] == ["ORDER 1", "ORDER 2"]
     assert b["order_tab"] is None and b["order_tabs"] == []
+    assert b["breakdown_kind"] == "camp"
+    camps = b["brand_breakdown"]
+    assert [c["brand_name"] for c in camps] == ["CAMP1", "CAMP2"]
+    assert [c["brand_code"] for c in camps] == [None, None]
+    assert [c["order_tabs"] for c in camps] == [["ORDER 1"], ["ORDER 2"]]
+    assert all(Decimal(c["nmv"]) == 3_500_000 and Decimal(c["gmv_estimated"]) == 6_000_000 for c in camps)
 
 
 def test_preview_split_returns_one_bbnt_per_tab_with_r_suffix(env):
@@ -116,7 +127,7 @@ def test_preview_split_returns_one_bbnt_per_tab_with_r_suffix(env):
     assert len(results) == 2
     assert results[0]["order_tab"] == "ORDER 1" and results[0]["campaign_name"] == "BDAY1"
     assert results[1]["order_tab"] == "ORDER 2" and results[1]["campaign_name"] == "BDAY2"
-    base = "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+    base = "06.26/BBNT-ORGANICA-EZ-FB-05"
     assert results[0]["bbnt_number"] == f"{base}-R1" and results[1]["bbnt_number"] == f"{base}-R2"
     assert Decimal(results[0]["figures"]["nmv"]) == 3_500_000 and Decimal(results[1]["figures"]["nmv"]) == 3_500_000
     assert results[0]["order_tabs_combined"] == [] and results[1]["order_tabs_combined"] == []

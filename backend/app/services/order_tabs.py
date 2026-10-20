@@ -8,7 +8,8 @@ header lệch vài dòng. Thứ tự quyết định:
 2. Ứng viên = các tab có đủ cột bắt buộc theo mapping (dò header trong 15 dòng đầu).
 3. Chỉ 1 ứng viên -> dùng luôn. Nhiều ứng viên -> chấm điểm theo tên tab:
    có tên/mã brand (+8), có tên chương trình (+4), là tab đang mở trong link ``gid`` (+2),
-   có tháng nghiệm thu (+1), trùng "Tên tab" của mapping (+1). Điểm cao nhất duy nhất -> dùng;
+   có tháng nghiệm thu (+1 — ``months`` rỗng theo mặc định vì BBNT không còn thu thập kỳ nghiệm thu, chỉ
+   còn dùng khi có truyền vào), trùng "Tên tab" của mapping (+1). Điểm cao nhất duy nhất -> dùng;
    hoà -> báo ``ORDER_TAB_AMBIGUOUS`` kèm danh sách để người dùng chọn trên web.
 """
 from __future__ import annotations
@@ -53,7 +54,7 @@ def _period_terms(months: Sequence[YearMonth]) -> list[str]:
     return out
 
 
-def score_tab(title: str, *, scope: Scope, campaign: str, months: Sequence[YearMonth],
+def score_tab(title: str, *, scope: Scope, campaign: str, months: Sequence[YearMonth] = (),
               gid_tab: str | None, mapping_tab: str | None) -> int:
     brand_terms = [x for b in scope.brands for x in (b.code, b.name)] + [scope.code, scope.display]
     score = 8 if any(_contains_term(title, t) for t in brand_terms if t) else 0
@@ -138,7 +139,7 @@ def list_candidate_tabs(book: OrderWorkbook, config: MappingConfig, *, mapping_c
 
 
 def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code: str, scope: Scope,
-                     campaign: str, months: Sequence[YearMonth], requested: str | None = None) -> TabChoice:
+                     campaign: str, months: Sequence[YearMonth] = (), requested: str | None = None) -> TabChoice:
     candidates, errors = _gather_candidates(book, config)
 
     if requested:

@@ -7,17 +7,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.core.numbering import NumberingError, YearMonth
+from app.core.numbering import NumberingError, normalize_suffix
 from app.services.generator import BREAKDOWN_MODES, TAB_MODES, BbntInput, CampLabel
 from app.services.sheets import parse_sheet_url
 
-#: "auto" (mặc định, hành vi cũ) | "combine" (gộp mọi tab/camp ứng viên thành 1 BBNT) | "split" (mỗi tab 1 BBNT
-#: riêng — CHỈ hợp lệ ở ``POST /bbnt/preview-split``, xem docstring đầu ``app.services.generator``).
-TabMode = Literal["auto", "combine", "split"]
+#: "auto" (mặc định) | "split" (mỗi tab 1 BBNT riêng — CHỈ hợp lệ ở ``POST /bbnt/preview-split``, xem docstring
+#: đầu ``app.services.generator``). "combine" đã bỏ — gộp nhiều tab/camp giờ LUÔN đi kèm ``breakdown_mode``.
+TabMode = Literal["auto", "split"]
 
 #: None (mặc định, hành vi cũ — tự nhận diện link "1 tab/brand" nếu có) | "brand" (tách bảng doanh thu/huỷ theo
-#: brand, commission chung) | "camp" (tách theo camp/đợt chạy, bắt buộc kèm ``camp_names``) — CHỈ dùng khi
-#: nghiệm thu group/nhiều brand cùng lúc, xem docstring đầu ``app.services.generator``.
+#: brand, CHỈ dùng khi nghiệm thu group/nhiều brand cùng lúc) | "camp" (tách theo camp/đợt chạy, bắt buộc kèm
+#: ``camp_names`` — dùng được cho MỌI phạm vi, kể cả 1 brand), xem docstring đầu ``app.services.generator``.
 BreakdownMode = Literal["brand", "camp"]
 
 
@@ -36,22 +36,26 @@ class BbntRequest(BaseModel):
     """Payload chung cho ``/bbnt/preview``, ``/bbnt/preview-split`` và ``/bbnt/generate``.
 
     Chọn đúng 1 trong ``brand_codes`` (1 brand, hoặc nhiều brand cùng group -> số BBNT dùng group code)
-    hoặc ``group_code`` (gộp cả group). ``contract_no`` chỉ cần khi có nhiều hợp đồng cùng hiệu lực.
+    hoặc ``group_code`` (gộp cả group). ``contract_no`` LUÔN bắt buộc — hợp đồng/% hoa hồng áp dụng do người
+    làm tự chọn (không còn tự suy luận theo kỳ nghiệm thu, vì link order giờ mặc định tính TOÀN BỘ dòng đơn,
+    không giới hạn theo tháng). ``bbnt_suffix`` ("đuôi biên bản nghiệm thu") người làm TỰ GÕ, ráp thẳng vào số
+    BBNT thay cho kỳ nghiệm thu cũ — portal tự chuẩn hoá (in hoa, gộp khoảng trắng/ký tự lạ thành gạch ngang).
 
-    ``extra_order_sheet_urls`` (tuỳ chọn): dán THÊM link order khác (ngoài ``order_sheet_url``) khi dữ liệu 1
-    kỳ nghiệm thu nằm rải trên nhiều file/link — mọi dòng đơn hàng từ các link được gộp lại tính chung 1 BBNT.
+    ``extra_order_sheet_urls`` (tuỳ chọn): dán THÊM link order khác (ngoài ``order_sheet_url``) khi dữ liệu nằm
+    rải trên nhiều file/link — mọi dòng đơn hàng từ các link được gộp lại tính chung 1 BBNT.
 
     ``tab_mode`` xử lý khi file order có NHIỀU tab là nhiều CAMP/đợt chạy khác nhau của CÙNG 1 brand/scope
-    (khác với link "1 tab/brand" — brand khác nhau luôn tự tách khối, không cần chọn): ``"auto"`` giữ hành vi
-    cũ (1 tab khớp rõ thì dùng, nhiều tab mơ hồ thì báo lỗi ``ORDER_TAB_AMBIGUOUS`` để chọn qua ``order_tab``);
-    ``"combine"`` gộp tất cả tab ứng viên vào 1 BBNT; ``"split"`` CHỈ dùng ở ``/bbnt/preview-split`` để xem
-    trước MỖI tab thành 1 BBNT riêng (bắt buộc kèm ``tab_campaign_names``).
+    (khác với link "1 tab/brand" — brand khác nhau luôn tự tách khối, không cần chọn): ``"auto"`` (mặc định)
+    1 tab khớp rõ thì dùng, nhiều tab mơ hồ thì báo lỗi ``ORDER_TAB_AMBIGUOUS`` để chọn qua ``order_tab`` hoặc
+    gộp qua ``breakdown_mode``; ``"split"`` CHỈ dùng ở ``/bbnt/preview-split`` để xem trước MỖI tab thành 1
+    BBNT riêng (bắt buộc kèm ``tab_campaign_names``).
 
-    ``breakdown_mode`` (CHỈ dùng khi nghiệm thu group hoặc nhiều brand cùng lúc, và ``tab_mode == "auto"``,
-    không chọn sẵn ``order_tab``): gộp mọi tab/link thành 1 BBNT DUY NHẤT nhưng TÁCH RIÊNG bảng doanh thu ước
-    tính/doanh thu thực nhận/tỷ lệ huỷ theo 1 trong 2 chiều (KHÔNG BAO GIỜ cả 2 cùng lúc) — ``"brand"`` tách
-    theo brand (dùng tab riêng từng brand nếu có sẵn, không thì nhóm theo cột Brand); ``"camp"`` tách theo
-    camp/đợt chạy (mỗi tab ở mỗi link là 1 camp, bắt buộc đặt tên riêng qua ``camp_names``).
+    ``breakdown_mode`` (không chọn sẵn ``order_tab``): gộp mọi tab/link thành 1 BBNT DUY NHẤT nhưng TÁCH RIÊNG
+    bảng doanh thu ước tính/doanh thu thực nhận/tỷ lệ huỷ VÀ danh sách sản phẩm theo 1 trong 2 chiều (KHÔNG BAO
+    GIỜ cả 2 cùng lúc) — đây là lựa chọn THAY THẾ việc "gộp nhiều tab không tách gì" (không còn tồn tại riêng):
+    ``"brand"`` tách theo brand (dùng tab riêng từng brand nếu có sẵn, không thì nhóm theo cột Brand) — CHỈ
+    dùng khi nghiệm thu group hoặc từ 2 brand cùng lúc trở lên; ``"camp"`` tách theo camp/đợt chạy (mỗi tab ở
+    mỗi link là 1 camp, bắt buộc đặt tên riêng qua ``camp_names``) — dùng được cho MỌI phạm vi, kể cả 1 brand.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -60,8 +64,10 @@ class BbntRequest(BaseModel):
     entity: str = Field(examples=["EZS"], min_length=2, max_length=20)
     brand_codes: list[str] | None = Field(default=None, min_length=1, max_length=50, examples=[["ORGANICA"]])
     group_code: str | None = Field(default=None, max_length=50)
-    contract_no: str | None = Field(default=None, max_length=100)
-    period_months: list[str] = Field(min_length=1, max_length=12, examples=[["05.26"], ["07.26", "08.26"]])
+    contract_no: str = Field(min_length=1, max_length=100,
+                             description="Bắt buộc — hợp đồng/% hoa hồng áp dụng do người làm tự chọn")
+    bbnt_suffix: str = Field(min_length=1, max_length=60, examples=["BDAY 08"],
+                             description="Đuôi biên bản nghiệm thu người làm tự gõ — portal tự chuẩn hoá")
     campaign_name: str = Field(min_length=1, max_length=100, examples=["BDAY"])
     order_sheet_url: str = Field(examples=["https://docs.google.com/spreadsheets/d/1AbC.../edit#gid=0"])
     extra_order_sheet_urls: list[str] = Field(default_factory=list, max_length=19,
@@ -72,11 +78,11 @@ class BbntRequest(BaseModel):
     strip_comments: bool = False
     order_tab: str | None = Field(default=None, max_length=200,
                                   description="Tab trong file order — bỏ trống để tự chọn")
-    tab_mode: TabMode = Field(default="auto", description="auto | combine | split (xem docstring lớp này)")
+    tab_mode: TabMode = Field(default="auto", description="auto | split (xem docstring lớp này)")
     tab_campaign_names: dict[str, str] | None = Field(
         default=None, description="Bắt buộc khi tab_mode='split': {tên tab: tên chương trình riêng}")
     breakdown_mode: BreakdownMode | None = Field(
-        default=None, description="brand | camp — chỉ dùng khi nghiệm thu group/nhiều brand (xem docstring lớp này)")
+        default=None, description="brand | camp — xem docstring lớp này")
     camp_names: list[CampLabelIn] = Field(
         default_factory=list, max_length=20,
         description="Bắt buộc khi breakdown_mode='camp': tên camp riêng cho từng (link_index, tab)")
@@ -86,7 +92,7 @@ class BbntRequest(BaseModel):
     def _upper(cls, v: str) -> str:
         return v.upper()
 
-    @field_validator("group_code", "contract_no", "mapping_code", "order_tab")
+    @field_validator("group_code", "mapping_code", "order_tab")
     @classmethod
     def _blank_none(cls, v: str | None) -> str | None:
         return v or None
@@ -101,14 +107,13 @@ class BbntRequest(BaseModel):
             raise ValueError("brand_codes rỗng")
         return codes
 
-    @field_validator("period_months")
+    @field_validator("bbnt_suffix")
     @classmethod
-    def _months(cls, v: list[str]) -> list[str]:
+    def _suffix(cls, v: str) -> str:
         try:
-            months = sorted({YearMonth.of(m) for m in v})
+            return normalize_suffix(v)
         except NumberingError as exc:
             raise ValueError(str(exc)) from exc
-        return [m.label for m in months]
 
     @field_validator("order_sheet_url")
     @classmethod
@@ -143,15 +148,16 @@ class BbntRequest(BaseModel):
         if self.breakdown_mode is not None:
             if self.breakdown_mode not in BREAKDOWN_MODES:
                 raise ValueError(f"breakdown_mode phải là 1 trong {BREAKDOWN_MODES}")
-            if not self.group_code and len(self.brand_codes or ()) < 2:
-                raise ValueError("breakdown_mode chỉ dùng khi nghiệm thu group hoặc từ 2 brand cùng lúc trở lên")
+            if self.breakdown_mode == "brand" and not self.group_code and len(self.brand_codes or ()) < 2:
+                raise ValueError("Tách theo brand chỉ dùng khi nghiệm thu group hoặc từ 2 brand cùng lúc trở "
+                                 "lên — 1 brand hãy tách theo camp")
         return self
 
     def to_input(self) -> BbntInput:
         camp_names = [CampLabel(c.link_index, c.tab, c.name) for c in self.camp_names] or None
-        return BbntInput(channel=self.channel, entity=self.entity, period_months=self.period_months,
-                         campaign_name=self.campaign_name, brand_codes=self.brand_codes, group_code=self.group_code,
-                         contract_no=self.contract_no, mapping_code=self.mapping_code,
+        return BbntInput(channel=self.channel, entity=self.entity, bbnt_suffix=self.bbnt_suffix,
+                         campaign_name=self.campaign_name, contract_no=self.contract_no,
+                         brand_codes=self.brand_codes, group_code=self.group_code, mapping_code=self.mapping_code,
                          collected_on_behalf=self.collected_on_behalf, consulting_fee=self.consulting_fee,
                          strip_comments=self.strip_comments, order_tab=self.order_tab, tab_mode=self.tab_mode,
                          tab_campaign_names=self.tab_campaign_names, breakdown_mode=self.breakdown_mode,
@@ -228,7 +234,7 @@ class PreviewResponse(BaseModel):
     bbnt_number: str
     file_name: str
     issue_date: date
-    period_label: str
+    bbnt_suffix: str
     program_name: str
     campaign_name: str = ""
     scope_code: str

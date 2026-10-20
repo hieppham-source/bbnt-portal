@@ -16,8 +16,8 @@ from .test_api import Env, docx_text
 
 ORDER_URL_MULTI = "https://docs.google.com/spreadsheets/d/1OrderShiseidoMultiTabAbCdEfGh/edit"
 
-GROUP = {"channel": "FB", "entity": "SASSY", "group_code": "SHISEIDO_GRP",
-        "period_months": ["07.26", "08.26", "09.26"], "campaign_name": "Q3", "order_sheet_url": ORDER_URL_MULTI}
+GROUP = {"channel": "FB", "entity": "SASSY", "group_code": "SHISEIDO_GRP", "bbnt_suffix": "CAMP",
+        "contract_no": "05/2026/HĐDV/SS-SHISEIDO", "campaign_name": "Q3", "order_sheet_url": ORDER_URL_MULTI}
 
 # Tách đúng dữ liệu của test_preview_group_sassy (tab chung) thành 2 tab riêng theo brand — tổng NMV/GMV giữ
 # nguyên để so chéo kết quả combined giữa 2 kiểu file order.
@@ -47,7 +47,7 @@ def test_brand_breakdown_computed_per_brand_commission_on_combined_total(env):
 
     # giống hệt kết quả test_preview_group_sassy (file 1 tab chung, lọc theo cột Brand) — chứng tỏ 2 cách đọc
     # file order cho cùng 1 kết quả combined
-    assert b["bbnt_number"] == "10.26/BBNT-SHISEIDO_GRP-SS-FB-CAMP-07-09.26"
+    assert b["bbnt_number"] == "10.26/BBNT-SHISEIDO_GRP-SS-FB-CAMP"
     assert b["brands"] == ["SHISEIDO", "ANESSA"] and b["scope_code"] == "SHISEIDO_GRP"
     assert Decimal(b["figures"]["nmv"]) == 15_000_000
     assert Decimal(b["figures"]["commission_amount"]) == 2_250_000          # trên TỔNG, không phải riêng brand
@@ -274,9 +274,15 @@ def test_breakdown_mode_camp_rejects_duplicate_names(env):
     assert r.status_code == 422 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_DUPLICATE"
 
 
-def test_breakdown_mode_rejects_combination_with_order_tab_or_tab_mode(env):
+def test_breakdown_mode_rejects_combination_with_order_tab(env):
     put(env, {"SHISEIDO": SHISEIDO_TAB, "ANESSA": ANESSA_TAB})
     r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "brand", "order_tab": "SHISEIDO"})
     assert r.status_code == 422 and r.json()["code"] == "BREAKDOWN_MODE_NOT_SUPPORTED"
-    r2 = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "brand", "tab_mode": "combine"})
-    assert r2.status_code == 422 and r2.json()["code"] == "BREAKDOWN_MODE_NOT_SUPPORTED"
+
+
+def test_tab_mode_combine_no_longer_a_valid_value(env):
+    """``tab_mode='combine'`` đã bỏ hẳn — gộp nhiều tab/camp giờ LUÔN đi kèm ``breakdown_mode`` (xem docstring
+    đầu ``app.services.generator``)."""
+    put(env, {"SHISEIDO": SHISEIDO_TAB, "ANESSA": ANESSA_TAB})
+    r = env.post("/api/v1/bbnt/preview", {**GROUP, "tab_mode": "combine"})
+    assert r.status_code == 422

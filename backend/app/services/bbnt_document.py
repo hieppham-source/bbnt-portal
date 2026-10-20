@@ -50,8 +50,9 @@ class PartyA:
 
 
 def program_name(scope_display: str, campaign_name: str, number: BbntNumber) -> str:
-    """'ORGANICA BDAY 05.26' — tháng nghiệp vụ luôn ở dạng mm.yy (period label của số BBNT)."""
-    return " ".join(x for x in (scope_display.strip().upper(), campaign_name.strip(), number.period_label) if x)
+    """'ORGANICA BDAY BDAY-05' — phần cuối là đuôi biên bản nghiệm thu người làm tự gõ (xem
+    ``app.core.numbering.normalize_suffix``), KHÔNG còn là kỳ nghiệm thu."""
+    return " ".join(x for x in (scope_display.strip().upper(), campaign_name.strip(), number.suffix) if x)
 
 
 def signature_name(representative: str) -> str:
@@ -100,7 +101,7 @@ def build_render_context(
         "contract_no": contract_no,
         "contract_signed": contract_signed_text(contract_signed_on, appendix_no=appendix_no,
                                                 appendix_signed_on=appendix_signed_on),
-        "period_label": number.period_label,                 # mm.yy
+        "bbnt_suffix": number.suffix,                         # đuôi biên bản nghiệm thu người làm tự gõ
         "issue_month": number.issue_month.label,             # mm.yy — tháng nghiệp vụ, KHÔNG phải ngày lập pháp lý
         "party_a_name": party_a.legal_name,
         "party_a_address": party_a.address,

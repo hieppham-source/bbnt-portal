@@ -33,18 +33,18 @@ def frozen_clock(monkeypatch):
 def test_generate_offline(order_xlsx, tmp_path, capsys):
     out = tmp_path / "out"
     code = cli.main(["generate", "--master-file", str(MASTER_XLSX), "--order-file", str(order_xlsx),
-                     "--entity", "EZS", "--channel", "FB", "--brand", "ORGANICA", "--period", "05.26",
-                     "--campaign", "BDAY", "--out", str(out)])
+                     "--entity", "EZS", "--channel", "FB", "--brand", "ORGANICA", "--suffix", "05",
+                     "--contract", "01/2026/HĐDV/EZS-ORGANICA", "--campaign", "BDAY", "--out", str(out)])
     text = capsys.readouterr().out
     assert code == 0, text
-    assert "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26" in text and "680,400" in text
-    assert (out / "BBNT_06.26_BBNT-ORGANICA-EZ-FB-CAMP-05.26.docx").stat().st_size > 10_000
+    assert "06.26/BBNT-ORGANICA-EZ-FB-05" in text and "816,480" in text
+    assert (out / "BBNT_06.26_BBNT-ORGANICA-EZ-FB-05.docx").stat().st_size > 10_000
 
 
 def test_generate_reports_business_error(order_xlsx, capsys):
     code = cli.main(["generate", "--master-file", str(MASTER_XLSX), "--order-file", str(order_xlsx),
-                     "--entity", "SASSY", "--channel", "FB", "--brand", "ORGANICA", "--period", "05.26",
-                     "--campaign", "BDAY", "--dry-run"])
+                     "--entity", "SASSY", "--channel", "FB", "--brand", "ORGANICA", "--suffix", "05",
+                     "--contract", "01/2026/HĐDV/EZS-ORGANICA", "--campaign", "BDAY", "--dry-run"])
     assert code == 1 and "CONTRACT_NOT_FOUND" in capsys.readouterr().err
 
 

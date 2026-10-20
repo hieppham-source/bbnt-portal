@@ -1,12 +1,9 @@
 """Tra cứu trên master data: brand/group -> phạm vi BBNT, chọn hợp đồng, chọn mapping file order."""
 from __future__ import annotations
 
-import calendar
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
 
-from app.core.numbering import YearMonth
 from app.errors import fail
 
 from .models import Brand, Contract, MasterData, OrderMapping
@@ -34,11 +31,6 @@ class Scope:
     def display(self) -> str:
         """Tên in trong tên chương trình (vd 'ORGANICA BDAY 05.26')."""
         return (self.group_name or self.group_code or "") if self.is_group else self.brands[0].name
-
-
-def period_bounds(months: Sequence[YearMonth]) -> tuple[date, date]:
-    last = months[-1]
-    return months[0].first_day(), date(last.year, last.month, calendar.monthrange(last.year, last.month)[1])
 
 
 def resolve_scope(master: MasterData, channel: str, brand_codes: Sequence[str] | None = None,
@@ -85,44 +77,26 @@ def _summary(c: Contract) -> dict[str, str | None]:
             "row": str(c.row)}
 
 
-def find_contract(master: MasterData, entity: str, scope: Scope, months: Sequence[YearMonth],
-                  contract_no: str | None = None) -> Contract:
-    """Hợp đồng hiệu lực trọn kỳ nghiệm thu. Ưu tiên: hợp đồng riêng brand > hợp đồng group;
-    rồi hợp đồng ghi đúng kênh > để trống kênh."""
+def find_contract(master: MasterData, entity: str, scope: Scope, contract_no: str) -> Contract:
+    """Hợp đồng áp dụng cho BBNT — LUÔN do người làm TỰ CHỌN (``contract_no`` bắt buộc; không còn tự suy luận
+    theo kỳ nghiệm thu, vì link order giờ mặc định tính TOÀN BỘ dòng đơn, không giới hạn theo tháng). Chỉ kiểm
+    tra hợp đồng đó CÓ áp dụng cho pháp nhân/kênh/phạm vi này không — không kiểm tra ngày hiệu lực, người làm tự
+    chịu trách nhiệm chọn đúng hợp đồng/% hoa hồng."""
     if entity not in master.entities:
         raise fail("ENTITY_NOT_FOUND", f"Pháp nhân {entity} không có trong tab PHAP_NHAN")
-    start, end = period_bounds(months)
     cands = [c for c in master.contracts if c.active and c.entity_code == entity
              and c.channel in (None, scope.channel) and _scope_matches(c, scope)]
-    if contract_no:
-        key = contract_no.strip().upper()
-        cands = [c for c in cands if c.contract_no.upper() == key]
-        if not cands:
-            raise fail("CONTRACT_NOT_FOUND", f"Hợp đồng {contract_no} không có / không áp dụng cho {entity} · "
-                                             f"{scope.channel} · {scope.code} (tab HOP_DONG)")
-    if not cands:
-        raise fail("CONTRACT_NOT_FOUND", f"Chưa có hợp đồng {entity} · {scope.channel} · {scope.code} "
-                                         "đang hiệu lực trong tab HOP_DONG")
-    covering = [c for c in cands if c.covers(start, end)]
-    if not covering:
-        touching = [c for c in cands if c.overlaps(start, end)]
-        if len(touching) > 1:
-            raise fail("CONTRACT_SPLIT_PERIOD", "Kỳ nghiệm thu nằm vắt qua 2 hợp đồng/2 mức hoa hồng — "
-                                                "hãy tách thành các BBNT theo từng giai đoạn",
-                       details={"contracts": [_summary(c) for c in touching]})
-        raise fail("CONTRACT_PERIOD_MISMATCH",
-                   f"Không có hợp đồng hiệu lực trọn kỳ {start:%d/%m/%Y}–{end:%d/%m/%Y}",
-                   details={"contracts": [_summary(c) for c in touching or cands]})
-
-    def rank(c: Contract) -> tuple[int, int]:
-        return (0 if c.brand_code else 1, 0 if c.channel else 1)
-
-    best = min(rank(c) for c in covering)
-    top = [c for c in covering if rank(c) == best]
-    if len(top) > 1:
-        raise fail("CONTRACT_AMBIGUOUS", "Có nhiều hợp đồng cùng hiệu lực — chọn Số hợp đồng",
-                   details={"contracts": [_summary(c) for c in top]})
-    return top[0]
+    key = contract_no.strip().upper()
+    matches = [c for c in cands if c.contract_no.upper() == key]
+    if not matches:
+        raise fail("CONTRACT_NOT_FOUND", f"Hợp đồng {contract_no} không có / không áp dụng cho {entity} · "
+                                         f"{scope.channel} · {scope.code} (tab HOP_DONG)",
+                   details={"contracts": [_summary(c) for c in cands]} if cands else None)
+    if len(matches) > 1:
+        raise fail("CONTRACT_AMBIGUOUS", f"Có nhiều dòng hợp đồng {contract_no} trong tab HOP_DONG — "
+                                         "kiểm tra lại dữ liệu master",
+                   details={"contracts": [_summary(c) for c in matches]})
+    return matches[0]
 
 
 def find_mapping(master: MasterData, channel: str, code: str | None = None) -> OrderMapping:

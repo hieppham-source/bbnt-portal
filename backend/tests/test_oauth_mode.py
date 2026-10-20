@@ -25,8 +25,8 @@ from .conftest import MASTER_XLSX, ORDER_URL_FB, ORGANICA_MAY, sheet_id, vn_cloc
 
 MASTER_URL = "https://docs.google.com/spreadsheets/d/1MasterSheetIdAbCdEfGhIjKlMnOp/edit"
 USER = {"X-User-Email": "hiep.pham@hannaholala.com"}
-BODY = {"channel": "FB", "entity": "EZS", "brand_codes": ["ORGANICA"], "period_months": ["05.26"],
-        "campaign_name": "BDAY", "order_sheet_url": ORDER_URL_FB}
+BODY = {"channel": "FB", "entity": "EZS", "brand_codes": ["ORGANICA"], "bbnt_suffix": "05",
+        "contract_no": "01/2026/HĐDV/EZS-ORGANICA", "campaign_name": "BDAY", "order_sheet_url": ORDER_URL_FB}
 
 
 class FakeUserReader:
@@ -86,7 +86,7 @@ def test_reads_master_and_order_with_user_token(client):
     h = {**USER, "X-Google-Access-Token": "good"}
     r = client.post("/api/v1/bbnt/preview", json=BODY, headers=h)
     assert r.status_code == 200, r.text
-    assert r.json()["bbnt_number"] == "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+    assert r.json()["bbnt_number"] == "06.26/BBNT-ORGANICA-EZ-FB-05"
     assert FakeUserReader.tokens == ["good", "good"]                     # 1 lần cho master, 1 lần cho order
     assert client.get("/readyz").json()["master"] == "ok"                # master đã vào cache
     assert client.get("/api/v1/master", headers=h).json()["channels"] == ["FB", "TTS"]

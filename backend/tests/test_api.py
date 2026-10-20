@@ -28,10 +28,10 @@ from .conftest import (
 )
 
 USER = {"X-User-Email": "hiep.pham@hannaholala.com"}
-ORGANICA = {"channel": "FB", "entity": "EZS", "brand_codes": ["ORGANICA"], "period_months": ["05.26"],
-            "campaign_name": "BDAY", "order_sheet_url": ORDER_URL_FB}
-SHISEIDO = {"channel": "FB", "entity": "SASSY", "group_code": "SHISEIDO_GRP",
-            "period_months": ["07.26", "08.26", "09.26"], "campaign_name": "Q3", "order_sheet_url": ORDER_URL_SHISEIDO}
+ORGANICA = {"channel": "FB", "entity": "EZS", "brand_codes": ["ORGANICA"], "bbnt_suffix": "05",
+            "contract_no": "01/2026/HĐDV/EZS-ORGANICA", "campaign_name": "BDAY", "order_sheet_url": ORDER_URL_FB}
+SHISEIDO = {"channel": "FB", "entity": "SASSY", "group_code": "SHISEIDO_GRP", "bbnt_suffix": "CAMP",
+            "contract_no": "05/2026/HĐDV/SS-SHISEIDO", "campaign_name": "Q3", "order_sheet_url": ORDER_URL_SHISEIDO}
 
 
 class Env:
@@ -76,27 +76,27 @@ def test_preview_organica(env):
     r = env.post("/api/v1/bbnt/preview", ORGANICA)
     assert r.status_code == 200, r.text
     b = r.json()
-    assert b["bbnt_number"] == "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
-    assert b["file_name"] == "BBNT_06.26_BBNT-ORGANICA-EZ-FB-CAMP-05.26.docx"
-    assert b["program_name"] == "ORGANICA BDAY 05.26" and b["issue_date"] == "2026-06-03"
+    assert b["bbnt_number"] == "06.26/BBNT-ORGANICA-EZ-FB-05"
+    assert b["file_name"] == "BBNT_06.26_BBNT-ORGANICA-EZ-FB-05.docx"
+    assert b["program_name"] == "ORGANICA BDAY 05" and b["issue_date"] == "2026-06-03"
     assert b["contract"]["contract_no"] == "01/2026/HĐDV/EZS-ORGANICA" and b["contract"]["master_row"] == 2
     f = {k: Decimal(str(v)) if isinstance(v, (int, float, str)) and k != "tax_mode" and k != "tax_label"
          and k != "total_payable_words" else v for k, v in b["figures"].items()}
-    assert f["gmv_estimated"] == 6_500_000                      # Đã giao + hoàn + huỷ trong kỳ, đúng brand
-    assert f["nmv"] == 3_500_000                                # chỉ Đã giao
-    assert f["commission_amount"] == 630_000 and f["vat_amount"] == 50_400
-    assert f["tax_deduction_amount"] == 0 and f["total_payable"] == 680_400
+    assert f["gmv_estimated"] == 7_200_000                      # Đã giao + hoàn + huỷ, đúng brand, TOÀN BỘ dòng
+    assert f["nmv"] == 4_200_000                                # chỉ Đã giao
+    assert f["commission_amount"] == 756_000 and f["vat_amount"] == 60_480
+    assert f["tax_deduction_amount"] == 0 and f["total_payable"] == 816_480
     assert b["figures"]["tax_label"] == "VAT 8%"
-    assert b["figures"]["total_payable_words"].startswith("Sáu trăm tám mươi nghìn bốn trăm đồng")
+    assert b["figures"]["total_payable_words"].startswith("Tám trăm mười sáu nghìn bốn trăm tám mươi đồng")
     assert b["other_brand_line_count"] == 1                     # dòng Anessa bị loại
-    assert {w["code"] for w in b["warnings"]} == {"RETURNED", "CANCELLED", "OUT_OF_PERIOD"}
+    assert {w["code"] for w in b["warnings"]} == {"RETURNED", "CANCELLED"}
     assert [i["product_name"] for i in b["items"]] == ["Serum Organica", "Kem dưỡng Organica"]
 
 
 def test_preview_group_sassy(env):
     env.clock = vn_clock(2026, 10, 5)
     b = env.post("/api/v1/bbnt/preview", SHISEIDO).json()
-    assert b["bbnt_number"] == "10.26/BBNT-SHISEIDO_GRP-SS-FB-CAMP-07-09.26"
+    assert b["bbnt_number"] == "10.26/BBNT-SHISEIDO_GRP-SS-FB-CAMP"
     assert b["brands"] == ["SHISEIDO", "ANESSA"] and b["scope_code"] == "SHISEIDO_GRP"
     assert Decimal(b["figures"]["nmv"]) == 15_000_000
     assert Decimal(b["figures"]["commission_amount"]) == 2_250_000
@@ -114,9 +114,9 @@ def test_contract_tax_rate_override_changes_vat(env):
     assert b["figures"]["tax_rate"] == "0.05"
     assert "HD" not in b["figures"]["tax_label"] or "riêng theo HĐ" in b["figures"]["tax_label"]
     assert "01/2026/HĐDV/EZS-ORGANICA" in b["figures"]["tax_label"]
-    assert Decimal(b["figures"]["commission_amount"]) == 630_000           # hoa hồng không đổi
-    assert Decimal(b["figures"]["vat_amount"]) == 31_500                   # 630.000 x 5% (thay vì 8%)
-    assert Decimal(b["figures"]["total_payable"]) == 661_500
+    assert Decimal(b["figures"]["commission_amount"]) == 756_000           # hoa hồng không đổi
+    assert Decimal(b["figures"]["vat_amount"]) == 37_800                   # 756.000 x 5% (thay vì 8%)
+    assert Decimal(b["figures"]["total_payable"]) == 793_800
 
 
 def test_contract_appendix_renders_plhd_clause(env):
@@ -177,13 +177,13 @@ def test_generate_returns_docx_and_stores_nothing(env, tmp_path, monkeypatch):
     r = env.post("/api/v1/bbnt/generate", ORGANICA)
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == DOCX_MIME
-    assert unquote(r.headers["x-bbnt-number"]) == "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
-    assert r.headers["x-bbnt-total-payable"] == "680400" and r.headers["x-bbnt-warnings"] == "3"
-    assert "BBNT_06.26_BBNT-ORGANICA-EZ-FB-CAMP-05.26.docx" in r.headers["content-disposition"]
+    assert unquote(r.headers["x-bbnt-number"]) == "06.26/BBNT-ORGANICA-EZ-FB-05"
+    assert r.headers["x-bbnt-total-payable"] == "816480" and r.headers["x-bbnt-warnings"] == "2"
+    assert "BBNT_06.26_BBNT-ORGANICA-EZ-FB-05.docx" in r.headers["content-disposition"]
     assert r.headers["cache-control"] == "no-store"
     text = docx_text(r.content)
-    for s in ("06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26", "ORGANICA BDAY 05.26", "01/2026/HĐDV/EZS-ORGANICA",
-              "CÔNG TY TNHH ORGANICA (MẪU)", "0071000123456", "680.400", "Serum Organica"):
+    for s in ("06.26/BBNT-ORGANICA-EZ-FB-05", "ORGANICA BDAY 05", "01/2026/HĐDV/EZS-ORGANICA",
+              "CÔNG TY TNHH ORGANICA (MẪU)", "0071000123456", "816.480", "Serum Organica"):
         assert s in text, s
     assert "{{" not in text
     assert list(tmp_path.iterdir()) == []                       # không ghi file nào ra đĩa
@@ -195,11 +195,11 @@ def test_redo_gives_same_number_and_rereads_order(env):
         ["25/05/2026", "FB007", "Đã giao", "Organica", "ORG-01", "Serum Organica", 1, 1_000_000])
     b = env.post("/api/v1/bbnt/generate", ORGANICA)
     assert a.headers["x-bbnt-number"] == b.headers["x-bbnt-number"]     # làm lại -> cùng số
-    assert (a.headers["x-bbnt-total-payable"], b.headers["x-bbnt-total-payable"]) == ("680400", "874800")
+    assert (a.headers["x-bbnt-total-payable"], b.headers["x-bbnt-total-payable"]) == ("816480", "1010880")
     assert len(env.sheets.calls) == 2                           # file order luôn đọc mới, không cache
     env.clock = vn_clock(2026, 7, 2)                            # lập sang tháng sau -> tiền tố tháng lập đổi
     c = env.post("/api/v1/bbnt/preview", ORGANICA).json()
-    assert c["bbnt_number"] == "07.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+    assert c["bbnt_number"] == "07.26/BBNT-ORGANICA-EZ-FB-05"
 
 
 def test_master_edit_picked_up_after_refresh(env):
@@ -208,15 +208,14 @@ def test_master_edit_picked_up_after_refresh(env):
     h[1][h[0].index("% hoa hồng")] = "20%"
     assert env.post("/api/v1/bbnt/preview", ORGANICA).json()["contract"]["commission_rate"] == "0.18"   # cache
     b = env.post("/api/v1/bbnt/preview", ORGANICA, refresh="true").json()
-    assert b["contract"]["commission_rate"] == "0.2" and Decimal(b["figures"]["commission_amount"]) == 700_000
+    assert b["contract"]["commission_rate"] == "0.2" and Decimal(b["figures"]["commission_amount"]) == 840_000
     assert env.master_reads == 2
 
 
 # =========================================================================== errors
 @pytest.mark.parametrize("over, status, code", [
     ({"entity": "SASSY"}, 422, "CONTRACT_NOT_FOUND"),
-    ({"period_months": ["12.25"]}, 422, "CONTRACT_PERIOD_MISMATCH"),
-    ({"period_months": ["07.26"]}, 422, "INVALID_INPUT"),                       # kỳ sau tháng lập
+    ({"contract_no": "KHONG-TON-TAI"}, 422, "CONTRACT_NOT_FOUND"),              # hợp đồng tự gõ không khớp
     ({"brand_codes": ["ORGANICA", "ANESSA"]}, 422, "BRANDS_NOT_SAME_GROUP"),
     ({"brand_codes": ["XYZ"]}, 422, "BRAND_NOT_FOUND"),
     ({"order_sheet_url": "https://docs.google.com/spreadsheets/d/1NotSharedAbCdEfGhIjKlMn/edit"}, 502,
@@ -254,7 +253,8 @@ def test_mapping_mismatch(env):
     {"brand_codes": None},
     {"group_code": "SHISEIDO_GRP"},                                          # cả brand lẫn group
     {"order_sheet_url": "https://example.com/sheet"},
-    {"period_months": ["13.26"]},
+    {"bbnt_suffix": ""},
+    {"contract_no": ""},
     {"collected_on_behalf": -1},
     {"unknown": 1},
 ])
