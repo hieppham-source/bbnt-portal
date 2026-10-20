@@ -44,12 +44,13 @@ tab/camp giờ LUÔN đi kèm 1 trong 2 cách tách bảng này):
   nếu link KHÔNG tách sẵn theo tab (1 tab chung, nhiều brand lẫn trong cột Brand) thì đọc hết mọi tab ứng viên
   rồi nhóm lại theo cột Brand (xem :func:`_group_lines_by_brand`).
 * ``"camp"`` — tách theo CAMP/đợt chạy: dùng được cho MỌI phạm vi (kể cả 1 brand — đây là lựa chọn khi 1 brand
-  có file nhiều tab/camp mơ hồ). Mỗi tab (ở mỗi link order) là 1 camp, bắt buộc có ``camp_names`` đặt tên riêng
-  cho TỪNG CẶP (link, tab) — tên tab không tự dùng làm tên camp vì có thể trùng giữa các link khác nhau (xem
-  :meth:`BbntGenerator._read_camp_breakdown`).
+  có file nhiều tab/camp mơ hồ). Mỗi tab (ở mỗi link order) là 1 camp, tên camp MẶC ĐỊNH lấy thẳng theo tên
+  tab/sheet đó (``camp_names`` giờ chỉ TUỲ CHỌN, dùng để đổi tên — tên tab trùng nhau giữa 2 link khác nhau tự
+  được thêm hậu tố tên link, xem :func:`_resolve_camp_names`/:meth:`BbntGenerator._read_camp_breakdown`).
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -523,21 +524,16 @@ class BbntGenerator:
                              scope: Scope, inp: BbntInput
                              ) -> tuple[ParseResult, list[OrderLine], int, list[BrandBreakdown], list[str]]:
         """``breakdown_mode == "camp"`` (MỌI phạm vi — kể cả 1 brand): mỗi tab ở mỗi link order
-        (``(link_index, tab)``) là 1 camp, bắt buộc đặt tên riêng qua ``inp.camp_names`` (tên tab không tự
-        dùng làm tên camp vì có thể trùng giữa 2 link). Tính NMV RIÊNG từng camp (:class:`BrandBreakdown` với
-        ``brand_code=None``), đồng thời gộp mọi dòng lại thành 1 danh sách chung (dùng tính NMV tổng + hoa hồng
-        chung cho cả BBNT, như :meth:`_read_brand_tabs`)."""
+        (``(link_index, tab)``) là 1 camp. Tên camp MẶC ĐỊNH lấy thẳng theo tên tab/sheet đó (``inp.camp_names``
+        chỉ để ĐỔI tên khi người dùng muốn — không còn bắt buộc, xem :func:`_resolve_camp_names`). Tính NMV
+        RIÊNG từng camp (:class:`BrandBreakdown` với ``brand_code=None``), đồng thời gộp mọi dòng lại thành 1
+        danh sách chung (dùng tính NMV tổng + hoa hồng chung cho cả BBNT, như :meth:`_read_brand_tabs`)."""
         sources: list[tuple[int, str]] = []
         for bi, book in enumerate(books):
             tabs = list_candidate_tabs(book, config, mapping_code=mapping.code)
             sources += [(bi, t) for t in tabs]
-        names = {(c.link_index, c.tab): c.name.strip() for c in (inp.camp_names or ())}
-        missing = [s for s in sources if not names.get(s, "").strip()]
-        if missing:
-            raise fail("TAB_CAMPAIGN_NAMES_REQUIRED",
-                       f"Tách theo camp cần đặt Tên camp riêng cho {len(missing)} tab/link chưa có tên "
-                       "(mỗi camp 1 tên khác nhau)", status=409,
-                       details={"tabs": [{"link_index": bi, "tab": t} for bi, t in missing]})
+        overrides = {(c.link_index, c.tab): c.name for c in (inp.camp_names or ())}
+        names = _resolve_camp_names(sources, overrides)
         seen: dict[str, tuple[int, str]] = {}
         for s in sources:
             key = normalize_text(names[s])
@@ -588,6 +584,29 @@ def _apply_contract_tax_override(tax: TaxPolicy, contract: Contract) -> TaxPolic
     kind = "VAT" if tax.mode is TaxMode.VAT_ADD else "Khấu trừ thuế" if tax.mode is TaxMode.TAX_DEDUCT else tax.label
     label = f"{kind} {format_percent(contract.tax_rate_override)} (riêng theo HĐ {contract.contract_no})"
     return replace(tax, rate=contract.tax_rate_override, label=label)
+
+
+def _link_label(link_index: int) -> str:
+    return "Link chính" if link_index == 0 else f"Link phụ #{link_index}"
+
+
+def _resolve_camp_names(sources: Sequence[tuple[int, str]],
+                        overrides: Mapping[tuple[int, str], str]) -> dict[tuple[int, str], str]:
+    """Tên camp: ưu tiên tên người dùng tự gõ (``overrides``, qua ``camp_names`` — tuỳ chọn, để ĐỔI tên nếu
+    muốn), còn lại MẶC ĐỊNH lấy thẳng tên tab/sheet đó — đúng yêu cầu "tên camp theo tên sheet". Tên tab trùng
+    nhau giữa 2 link order khác nhau (tên tab chỉ đảm bảo duy nhất TRONG 1 link, không liên-link) được tự thêm
+    hậu tố tên link (``Link chính`` / ``Link phụ #N``) để không bị gộp nhầm thành 1 camp — CHỈ áp dụng cho tên
+    MẶC ĐỊNH; tên người dùng tự gõ trùng nhau vẫn bị chặn ở ``TAB_CAMPAIGN_NAMES_DUPLICATE`` (xem gọi nơi dùng
+    hàm này) như cũ, vì đó là lựa chọn rõ ràng của người dùng, không phải trùng ngẫu nhiên."""
+    names: dict[tuple[int, str], str] = {}
+    for s in sources:
+        override = overrides.get(s, "").strip()
+        names[s] = override or s[1]
+    counts = Counter(normalize_text(names[s]) for s in sources)
+    for s in sources:
+        if not overrides.get(s, "").strip() and counts[normalize_text(names[s])] > 1:
+            names[s] = f"{s[1]} ({_link_label(s[0])})"
+    return names
 
 
 def _group_lines_by_brand(lines: Sequence[OrderLine], scope: Scope) -> list[BrandBreakdown]:
