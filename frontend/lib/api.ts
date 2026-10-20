@@ -3,12 +3,13 @@ const API = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, "")
 
 export type Channel = string
 
-// "auto" (mặc định, hành vi cũ) | "combine" (gộp mọi tab/camp ứng viên thành 1 BBNT) | "split" (mỗi tab 1 BBNT
-// riêng — chỉ hợp lệ qua previewBbntSplit, bắt buộc kèm tab_campaign_names)
-export type TabMode = "auto" | "combine" | "split"
+// "auto" (mặc định, hành vi cũ) | "split" (mỗi tab 1 BBNT riêng — chỉ hợp lệ qua previewBbntSplit, bắt buộc kèm
+// tab_campaign_names). "combine" đã bỏ — gộp nhiều tab/camp giờ LUÔN đi kèm breakdown_mode (xem bên dưới).
+export type TabMode = "auto" | "split"
 
-// "brand" (tách bảng doanh thu/huỷ theo brand, commission chung) | "camp" (tách theo camp/đợt chạy, bắt buộc
-// kèm camp_names) — CHỈ dùng khi nghiệm thu group/nhiều brand cùng lúc, không dùng cùng order_tab/tab_mode khác "auto"
+// "brand" (tách bảng doanh thu/huỷ VÀ danh sách sản phẩm theo brand, commission chung) — CHỈ dùng khi nghiệm
+// thu group/nhiều brand cùng lúc | "camp" (tách theo camp/đợt chạy, bắt buộc kèm camp_names) — dùng được cho
+// MỌI phạm vi, kể cả 1 brand. Không dùng cùng order_tab.
 export type BreakdownMode = "brand" | "camp"
 
 // 1 camp = 1 tab trong 1 link order cụ thể. link_index: 0 = order_sheet_url chính, 1.. = vị trí (1-based)
@@ -20,8 +21,9 @@ export type BbntRequest = {
   entity: string
   brand_codes?: string[] // 1 brand, hoặc nhiều brand cùng group
   group_code?: string // hoặc cả group (chỉ 1 trong 2)
-  contract_no?: string // chỉ cần khi API báo CONTRACT_AMBIGUOUS
-  period_months: string[] // ["05.26"] hoặc ["07.26","08.26","09.26"]
+  contract_no: string // LUÔN bắt buộc — hợp đồng/% hoa hồng áp dụng do người làm tự chọn
+  bbnt_suffix: string // "Đuôi biên bản nghiệm thu" người làm tự gõ (vd "BDAY 05") — ráp thẳng vào số BBNT,
+  // KHÔNG còn là kỳ nghiệm thu; link order mặc định tính TOÀN BỘ dòng đơn, không lọc theo tháng nữa
   campaign_name: string
   order_sheet_url: string
   extra_order_sheet_urls?: string[] // link order BỔ SUNG để gộp chung 1 BBNT
@@ -89,7 +91,7 @@ export type PreviewOut = {
   bbnt_number: string
   file_name: string
   issue_date: string
-  period_label: string
+  bbnt_suffix: string
   program_name: string
   campaign_name: string
   scope_code: string
@@ -133,7 +135,7 @@ export type PreviewOut = {
   other_brand_line_count: number
   order_tab: string | null
   order_tabs: string[]
-  // Tên các tab đã GỘP lại thành BBNT này (tab_mode === "combine" và/hoặc nhiều order_sheet_url, >= 2 tab) —
+  // Tên các tab đã GỘP lại thành BBNT này (breakdown_mode === "camp" và/hoặc nhiều order_sheet_url, >= 2 tab) —
   // rỗng khi không gộp.
   order_tabs_combined: string[]
   order_file_kind: "google_sheet" | "xlsx"
