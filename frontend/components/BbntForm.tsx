@@ -38,6 +38,9 @@ type ContractChoice = { contract_no: string; scope?: string; channel?: string; v
 const SHEET_RE =
   /^https:\/\/(docs\.google\.com\/spreadsheets\/d\/|drive\.google\.com\/(file\/d\/|open\?id=))[A-Za-z0-9_-]{20,}/
 
+// Tổng số link order tối đa (link chính + link phụ) — khớp max_length backend (xem BbntRequest.extra_order_sheet_urls).
+const MAX_ORDER_LINKS = 10
+
 export default function BbntForm() {
   const token = useIdToken()
 
@@ -57,7 +60,6 @@ export default function BbntForm() {
   const [campaign, setCampaign] = useState("")
   const [orderUrl, setOrderUrl] = useState("")
   const [extraOrderUrls, setExtraOrderUrls] = useState<string[]>([])
-  const [extraOrderInput, setExtraOrderInput] = useState("")
   const [orderTab, setOrderTab] = useState("")
   const [tabMode, setTabMode] = useState<TabMode>("auto")
   const [mappingCode, setMappingCode] = useState("")
@@ -145,8 +147,20 @@ export default function BbntForm() {
   const brandGroups = new Set(selectedBrands.map((b) => b.group_code))
   const mixedGroups = mode === "brand" && selectedBrands.length > 1 && (brandGroups.size > 1 || brandGroups.has(null))
 
-  // Nghiệm thu group/nhiều brand cùng lúc -> bắt buộc chọn cách tách bảng (theo brand hay theo camp)
-  const needsBreakdownChoice = mode === "group" ? !!groupCode : brandCodes.length > 1 && !mixedGroups
+  // Nghiệm thu group/nhiều brand cùng lúc (các brand này CÓ chiều "theo brand" để tách)
+  const isGroupScope = mode === "group" ? !!groupCode : brandCodes.length > 1 && !mixedGroups
+  // Bắt buộc chọn cách tách bảng (theo brand hay theo camp) khi: nghiệm thu group/nhiều brand CÙNG LÚC, HOẶC
+  // gộp từ 2 link order trở lên (kể cả 1 brand) — trường hợp sau chỉ có "theo camp" (xem JSX bên dưới), không
+  // có chiều brand để tách.
+  const needsBreakdownChoice = isGroupScope || extraOrderUrls.length > 0
+
+  // 1 brand + gộp nhiều link order -> CHỈ "theo camp" hợp lệ (backend từ chối "theo brand" khi không phải
+  // group/nhiều brand) -> tự chọn luôn, khỏi bắt người dùng bấm 1 nút "chọn" không có lựa chọn nào khác.
+  useEffect(() => {
+    if (!isGroupScope && extraOrderUrls.length > 0 && breakdownMode === null) {
+      setBreakdownMode("camp")
+    }
+  }, [isGroupScope, extraOrderUrls.length, breakdownMode])
 
   const contractOptions = useMemo(() => {
     if (!master) return []
@@ -184,7 +198,16 @@ export default function BbntForm() {
   if (!suffix.trim()) problems.push("Nhập đuôi biên bản nghiệm thu")
   if (!campaign.trim()) problems.push("Nhập tên chương trình")
   if (!SHEET_RE.test(orderUrl.trim())) problems.push("Dán link file order (Google Sheet hoặc file Excel trên Drive)")
-  if (needsBreakdownChoice && !breakdownMode) problems.push("Chọn cách tách bảng: theo brand hay theo camp")
+  extraOrderUrls.forEach((u, i) => {
+    if (!SHEET_RE.test(u.trim())) problems.push(`Link order #${i + 2} chưa hợp lệ — điền đúng link hoặc bấm × để xoá`)
+  })
+  {
+    const allUrls = [orderUrl.trim(), ...extraOrderUrls.map((u) => u.trim())].filter(Boolean)
+    if (new Set(allUrls).size !== allUrls.length) problems.push("Có link order bị trùng lặp — kiểm tra lại")
+  }
+  if (needsBreakdownChoice && !breakdownMode) {
+    problems.push(isGroupScope ? "Chọn cách tách bảng: theo brand hay theo camp" : "Chọn cách tách bảng theo camp")
+  }
   if (breakdownMode === "camp" && campSources && campSources.some((s) => !(campNames[campKey(s.link_index, s.tab)] ?? "").trim()))
     problems.push("Đặt tên camp cho đủ các tab/link bên dưới")
 
@@ -201,7 +224,9 @@ export default function BbntForm() {
       bbnt_suffix: suffix.trim(),
       campaign_name: campaign.trim(),
       order_sheet_url: orderUrl.trim(),
-      ...(extraOrderUrls.length ? { extra_order_sheet_urls: extraOrderUrls } : {}),
+      ...(extraOrderUrls.length
+        ? { extra_order_sheet_urls: extraOrderUrls.map((u) => u.trim()).filter(Boolean) }
+        : {}),
       collected_on_behalf: Number(collected || 0),
       consulting_fee: Number(consulting || 0),
       strip_comments: stripComments,
@@ -337,15 +362,19 @@ export default function BbntForm() {
     setCampNames({})
   }
 
-  function addExtraOrderUrl() {
-    const u = extraOrderInput.trim()
-    if (!u || !SHEET_RE.test(u)) return
-    if (u === orderUrl.trim() || extraOrderUrls.includes(u)) {
-      setExtraOrderInput("")
-      return
-    }
-    touch(setExtraOrderUrls)([...extraOrderUrls, u])
-    setExtraOrderInput("")
+  // Link order #2..#10 (extraOrderUrls) — mỗi link 1 ô nhập riêng, sửa/xoá trực tiếp tại chỗ (không qua ô nhập
+  // tạm + nút "Thêm" như trước) để rõ ràng gộp được NHIỀU link, không chỉ 1.
+  function addOrderLink() {
+    if (extraOrderUrls.length >= MAX_ORDER_LINKS - 1) return
+    touch(setExtraOrderUrls)([...extraOrderUrls, ""])
+  }
+
+  function updateOrderLink(i: number, v: string) {
+    touch(setExtraOrderUrls)(extraOrderUrls.map((u, idx) => (idx === i ? v : u)))
+  }
+
+  function removeOrderLink(i: number) {
+    touch(setExtraOrderUrls)(extraOrderUrls.filter((_, idx) => idx !== i))
   }
 
   // ---------------------------------------------------------------- render
@@ -440,17 +469,22 @@ export default function BbntForm() {
           <fieldset>
             <legend>Tách bảng doanh thu</legend>
             <p className="hint">
-              Nghiệm thu gộp nhiều brand/cả group cùng lúc — chọn cách tách bảng doanh thu ước tính, doanh thu thực
-              nhận, tỷ lệ huỷ đơn. Hoa hồng vẫn tính chung cho toàn bộ BBNT dù chọn cách nào.
+              {isGroupScope
+                ? "Nghiệm thu gộp nhiều brand/cả group cùng lúc — chọn cách tách bảng doanh thu ước tính, doanh " +
+                  "thu thực nhận, tỷ lệ huỷ đơn. Hoa hồng vẫn tính chung cho toàn bộ BBNT dù chọn cách nào."
+                : "Gộp từ 2 link order trở lên cho 1 brand — portal tự tách riêng bảng doanh thu và danh sách " +
+                  "sản phẩm theo từng link/camp. Hoa hồng vẫn tính chung cho toàn bộ BBNT."}
             </p>
             <div className="tabs">
-              <button
-                className={breakdownMode === "brand" ? "on" : ""}
-                type="button"
-                onClick={() => pickBreakdownMode("brand")}
-              >
-                Theo brand
-              </button>
+              {isGroupScope && (
+                <button
+                  className={breakdownMode === "brand" ? "on" : ""}
+                  type="button"
+                  onClick={() => pickBreakdownMode("brand")}
+                >
+                  Theo brand
+                </button>
+              )}
               <button
                 className={breakdownMode === "camp" ? "on" : ""}
                 type="button"
@@ -528,7 +562,7 @@ export default function BbntForm() {
         </label>
 
         <label>
-          Link file order
+          Link order #1
           <input
             value={orderUrl}
             onChange={(e) => {
@@ -543,32 +577,29 @@ export default function BbntForm() {
           </span>
         </label>
 
-        {extraOrderUrls.length > 0 && (
-          <div className="chips">
-            {extraOrderUrls.map((u, i) => (
-              <span key={u} className="chip" title={u}>
-                Link order #{i + 2}
-                <button
-                  type="button"
-                  aria-label={`Bỏ link order #${i + 2}`}
-                  onClick={() => touch(setExtraOrderUrls)(extraOrderUrls.filter((x) => x !== u))}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="row tight">
-          <input
-            value={extraOrderInput}
-            onChange={(e) => setExtraOrderInput(e.target.value)}
-            placeholder="Dán thêm link order nữa để gộp chung 1 BBNT (nếu dữ liệu nằm rải trên nhiều file)"
-          />
-          <button type="button" onClick={addExtraOrderUrl}>
-            Thêm link
+        {extraOrderUrls.map((u, i) => (
+          <label key={i}>
+            Link order #{i + 2}
+            <div className="row tight">
+              <input
+                value={u}
+                onChange={(e) => updateOrderLink(i, e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/… (dữ liệu sẽ gộp chung vào 1 BBNT)"
+              />
+              <button type="button" aria-label={`Bỏ link order #${i + 2}`} onClick={() => removeOrderLink(i)}>
+                ×
+              </button>
+            </div>
+          </label>
+        ))}
+
+        {extraOrderUrls.length < MAX_ORDER_LINKS - 1 ? (
+          <button type="button" className="link" onClick={addOrderLink}>
+            + Thêm link order{extraOrderUrls.length > 0 ? " nữa" : " (nếu dữ liệu nằm rải trên nhiều file)"}
           </button>
-        </div>
+        ) : (
+          <p className="hint">Đã đạt tối đa {MAX_ORDER_LINKS} link order.</p>
+        )}
 
         <details>
           <summary>Tuỳ chọn thêm</summary>
