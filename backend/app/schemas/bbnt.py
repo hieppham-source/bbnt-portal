@@ -65,7 +65,12 @@ class BbntRequest(BaseModel):
     brand_codes: list[str] | None = Field(default=None, min_length=1, max_length=50, examples=[["ORGANICA"]])
     group_code: str | None = Field(default=None, max_length=50)
     contract_no: str = Field(min_length=1, max_length=100,
-                             description="Bắt buộc — hợp đồng/% hoa hồng áp dụng do người làm tự chọn")
+                             description="Bắt buộc — hợp đồng/% hoa hồng áp dụng do người làm tự chọn, hoặc tự "
+                                         "gõ khi manual_contract=True")
+    manual_contract: bool = Field(
+        default=False, description="Hợp đồng CHƯA có trong Sheet master — bỏ qua tra cứu, dùng thẳng "
+                                   "contract_no tự gõ; Bên A/% hoa hồng/VAT/ngày ký để placeholder (hoa hồng/"
+                                   "VAT tính ra = 0), người làm tự điền tay trên file .docx đã tải")
     bbnt_suffix: str = Field(min_length=1, max_length=60, examples=["BDAY 08"],
                              description="Đuôi biên bản nghiệm thu người làm tự gõ — portal tự chuẩn hoá")
     campaign_name: str = Field(min_length=1, max_length=100, examples=["BDAY"])
@@ -162,7 +167,7 @@ class BbntRequest(BaseModel):
                          collected_on_behalf=self.collected_on_behalf, consulting_fee=self.consulting_fee,
                          strip_comments=self.strip_comments, order_tab=self.order_tab, tab_mode=self.tab_mode,
                          tab_campaign_names=self.tab_campaign_names, breakdown_mode=self.breakdown_mode,
-                         camp_names=camp_names)
+                         camp_names=camp_names, manual_contract=self.manual_contract)
 
 
 class IssueOut(BaseModel):
@@ -248,6 +253,10 @@ class PreviewResponse(BaseModel):
     #: ``BbntRequest.breakdown_mode``; "brand" cũng dùng cho link tự nhận diện "1 tab/brand" như trước đây).
     breakdown_kind: Literal["none", "brand", "camp"] = "none"
     brand_breakdown: list[BrandBreakdownOut] = []
+    #: ``BbntRequest.manual_contract`` — ``True`` thì ``contract``/hoa hồng/VAT ở trên đều là PLACEHOLDER (Bên A
+    #: chưa điền, hoa hồng/VAT = 0) — portal PHẢI cảnh báo người dùng tự điền tay trước khi dùng file để thanh
+    #: toán, KHÔNG dùng số liệu này làm căn cứ thật.
+    manual_contract: bool = False
     order_line_count: int
     other_brand_line_count: int
     order_tab: str | None = None
