@@ -141,6 +141,36 @@ def test_contract_appendix_renders_plhd_clause(env):
             "31 tháng 07 năm 2026") in text
 
 
+# =========================================================================== nhiều link order (extra_order_sheet_urls)
+SECOND_ORDER_URL = "https://docs.google.com/spreadsheets/d/1OrderFbSecondAbCdEfGhIjKlMnOp/edit"
+
+
+def test_extra_order_sheet_urls_merges_lines_from_multiple_links(env):
+    """Dán thêm ``extra_order_sheet_urls`` -> dòng đơn hàng của link đó được GỘP vào cùng 1 BBNT (vẫn tách
+    theo brand/pháp nhân như lúc chọn — chỉ gộp thêm dữ liệu, không tự đổi scope/entity)."""
+    env.sheets.sheets[sheet_id(SECOND_ORDER_URL)] = order_rows([
+        ["04/05/2026", "FB101", "Đã giao", "Organica", "ORG-01", "Serum Organica", 1, 1_200_000],
+    ])
+    base = env.post("/api/v1/bbnt/preview", ORGANICA).json()
+    merged = env.post("/api/v1/bbnt/preview", {**ORGANICA, "extra_order_sheet_urls": [SECOND_ORDER_URL]}).json()
+    assert Decimal(merged["figures"]["nmv"]) == Decimal(base["figures"]["nmv"]) + 1_200_000
+    assert Decimal(merged["figures"]["gmv_estimated"]) == Decimal(base["figures"]["gmv_estimated"]) + 1_200_000
+    assert merged["order_tabs_combined"] == ["ORDER", "ORDER"]
+    assert merged["order_tab"] is None and merged["order_tabs"] == []
+
+
+def test_generate_rejects_split_tab_mode(env):
+    """``tab_mode='split'`` chỉ dùng được qua ``/preview-split`` — gọi ``/generate`` thẳng phải báo lỗi."""
+    r = env.post("/api/v1/bbnt/generate", {**ORGANICA, "tab_mode": "split", "tab_campaign_names": {"ORDER": "X"}})
+    assert r.status_code == 422 and r.json()["code"] == "INVALID_INPUT"
+
+
+def test_breakdown_mode_rejected_for_single_brand_scope(env):
+    """``breakdown_mode`` (tách bảng theo brand/camp) chỉ dùng khi nghiệm thu group/nhiều brand cùng lúc."""
+    r = env.post("/api/v1/bbnt/preview", {**ORGANICA, "breakdown_mode": "brand"})
+    assert r.status_code == 422
+
+
 # =========================================================================== generate
 def test_generate_returns_docx_and_stores_nothing(env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

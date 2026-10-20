@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from app.core.calculation import MappingConfig, MappingError, locate_header, normalize_text
 from app.core.numbering import YearMonth
-from app.errors import fail
+from app.errors import BbntError, fail
 from app.master.index import Scope
 from app.services.sheets import OrderWorkbook
 
@@ -103,8 +103,7 @@ def detect_brand_tabs(book: OrderWorkbook, config: MappingConfig, *, scope: Scop
     return by_brand
 
 
-def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code: str, scope: Scope,
-                     campaign: str, months: Sequence[YearMonth], requested: str | None = None) -> TabChoice:
+def _gather_candidates(book: OrderWorkbook, config: MappingConfig) -> tuple[list[str], dict[str, str]]:
     heads = book.heads(book.tabs)
     candidates: list[str] = []
     errors: dict[str, str] = {}
@@ -114,6 +113,33 @@ def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code
             candidates.append(tab)
         except MappingError as exc:
             errors[tab] = str(exc)
+    return candidates, errors
+
+
+def _no_candidates_error(book: OrderWorkbook, config: MappingConfig, mapping_code: str,
+                         errors: dict[str, str]) -> BbntError:
+    first = book.gid_tab if book.gid_tab in errors else (
+        config.sheet_name if config.sheet_name in errors else book.tabs[0] if book.tabs else None)
+    detail = f" Tab '{first}': {errors[first]}" if first in errors else ""
+    names = ", ".join(f"'{t}'" for t in book.tabs[:8])
+    return fail("MAPPING_MISMATCH", f"File order không có tab nào khớp mapping {mapping_code} "
+                                    f"(đã thử {len(book.tabs)} tab: {names}).{detail}",
+               details={"tabs": book.tabs})
+
+
+def list_candidate_tabs(book: OrderWorkbook, config: MappingConfig, *, mapping_code: str) -> list[str]:
+    """Liệt kê MỌI tab khớp đủ cột mapping (không chấm điểm/chọn ra 1 tab như :func:`choose_order_tab`) — dùng
+    khi muốn GỘP (``tab_mode='combine'`` — nhiều tab/nhiều camp cùng 1 brand/scope gộp chung 1 BBNT) hay TÁCH
+    (``tab_mode='split'`` — mỗi tab 1 BBNT riêng) toàn bộ ứng viên thay vì để hệ thống tự chọn/báo mơ hồ 1 tab."""
+    candidates, errors = _gather_candidates(book, config)
+    if not candidates:
+        raise _no_candidates_error(book, config, mapping_code, errors)
+    return candidates
+
+
+def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code: str, scope: Scope,
+                     campaign: str, months: Sequence[YearMonth], requested: str | None = None) -> TabChoice:
+    candidates, errors = _gather_candidates(book, config)
 
     if requested:
         requested = next((t for t in book.tabs if t.strip() == requested.strip()), requested)
@@ -123,13 +149,7 @@ def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code
         return TabChoice(requested, candidates, "chosen")
 
     if not candidates:
-        first = book.gid_tab if book.gid_tab in errors else (
-            config.sheet_name if config.sheet_name in errors else book.tabs[0] if book.tabs else None)
-        detail = f" Tab '{first}': {errors[first]}" if first in errors else ""
-        names = ", ".join(f"'{t}'" for t in book.tabs[:8])
-        raise fail("MAPPING_MISMATCH", f"File order không có tab nào khớp mapping {mapping_code} "
-                                       f"(đã thử {len(book.tabs)} tab: {names}).{detail}",
-                   details={"tabs": book.tabs})
+        raise _no_candidates_error(book, config, mapping_code, errors)
     if len(candidates) == 1:
         return TabChoice(candidates[0], candidates, "only")
 

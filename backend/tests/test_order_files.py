@@ -93,6 +93,60 @@ def test_unknown_requested_tab_and_no_matching_tab(env):
     assert r.json()["code"] == "MAPPING_MISMATCH" and "đã thử 2 tab" in r.json()["message"]
 
 
+# ----------------------------------------------------------------------------- tab_mode combine/split
+def test_combine_mode_merges_all_candidate_tabs(env):
+    """``tab_mode='combine'`` trên link có nhiều tab mơ hồ (nhiều camp cùng brand) -> gộp TẤT CẢ tab lại thành
+    1 BBNT thay vì báo ``ORDER_TAB_AMBIGUOUS``."""
+    put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
+    b = env.post("/api/v1/bbnt/preview", {**NO_GID, "tab_mode": "combine"}).json()
+    assert Decimal(b["figures"]["nmv"]) == 7_000_000 and Decimal(b["figures"]["gmv_estimated"]) == 12_000_000
+    assert b["order_tabs_combined"] == ["ORDER 1", "ORDER 2"]
+    assert b["order_tab"] is None and b["order_tabs"] == []
+
+
+def test_preview_split_returns_one_bbnt_per_tab_with_r_suffix(env):
+    """``tab_mode='split'`` (chỉ qua ``/preview-split``) -> mỗi tab ứng viên 1 BBNT riêng, tên chương trình lấy
+    từ ``tab_campaign_names`` (bắt buộc khác nhau từng tab), số BBNT giống hệt nhau trừ hậu tố ``-R{n}`` theo
+    thứ tự tab (số BBNT không phân biệt theo tên chương trình)."""
+    put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
+    payload = {**NO_GID, "tab_mode": "split", "tab_campaign_names": {"ORDER 1": "BDAY1", "ORDER 2": "BDAY2"}}
+    r = env.post("/api/v1/bbnt/preview-split", payload)
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert len(results) == 2
+    assert results[0]["order_tab"] == "ORDER 1" and results[0]["campaign_name"] == "BDAY1"
+    assert results[1]["order_tab"] == "ORDER 2" and results[1]["campaign_name"] == "BDAY2"
+    base = "06.26/BBNT-ORGANICA-EZ-FB-CAMP-05.26"
+    assert results[0]["bbnt_number"] == f"{base}-R1" and results[1]["bbnt_number"] == f"{base}-R2"
+    assert Decimal(results[0]["figures"]["nmv"]) == 3_500_000 and Decimal(results[1]["figures"]["nmv"]) == 3_500_000
+    assert results[0]["order_tabs_combined"] == [] and results[1]["order_tabs_combined"] == []
+
+
+def test_preview_split_requires_distinct_campaign_names_per_tab(env):
+    put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
+    r = env.post("/api/v1/bbnt/preview-split",
+                {**NO_GID, "tab_mode": "split", "tab_campaign_names": {"ORDER 1": "BDAY1"}})
+    assert r.status_code == 409 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_REQUIRED"
+    assert r.json()["details"]["tabs"] == ["ORDER 2"]
+
+
+def test_preview_split_rejects_duplicate_campaign_names(env):
+    put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
+    r = env.post("/api/v1/bbnt/preview-split",
+                {**NO_GID, "tab_mode": "split", "tab_campaign_names": {"ORDER 1": "SAME", "ORDER 2": "same "}})
+    assert r.status_code == 422 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_DUPLICATE"
+
+
+def test_preview_split_rejects_multiple_order_links(env):
+    put(env, {"ORDER 1": ORG, "ORDER 2": ORG})
+    second_url = "https://docs.google.com/spreadsheets/d/1SecondOrderAbCdEfGhIjKlMnOp/edit"
+    env.sheets.sheets[sheet_id(second_url)] = ORG
+    r = env.post("/api/v1/bbnt/preview-split",
+                {**NO_GID, "tab_mode": "split", "extra_order_sheet_urls": [second_url],
+                 "tab_campaign_names": {"ORDER 1": "A", "ORDER 2": "B"}})
+    assert r.status_code == 422 and r.json()["code"] == "TAB_MODE_NOT_SUPPORTED"
+
+
 def test_generate_fills_contract_signed_date(env):
     r = env.post("/api/v1/bbnt/preview", ORGANICA).json()
     assert r["contract"]["signed_on_source"] == "Hiệu lực từ"       # cột Ngày ký trống

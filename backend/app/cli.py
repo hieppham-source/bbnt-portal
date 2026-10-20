@@ -98,10 +98,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 def _order_opener(args: argparse.Namespace) -> OrderOpener:
     if args.order_file:
         path = args.order_file
-        return lambda: xlsx_workbook(Path(path).read_bytes())
+        return lambda: [xlsx_workbook(Path(path).read_bytes())]
     ref = parse_sheet_url(args.order_url)
     reader = _google_reader()
-    return lambda: reader.open(ref)
+    return lambda: [reader.open(ref)]
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
