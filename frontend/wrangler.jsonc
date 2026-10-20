@@ -1,0 +1,19 @@
+// Cloudflare Workers — deploy bằng adapter @opennextjs/cloudflare (xem package.json: preview/deploy).
+// Đổi "name" nếu muốn URL *.workers.dev khác (mặc định https://<name>.<subdomain>.workers.dev).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bbnt-portal-frontend",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "bbnt-portal-frontend"
+    }
+  ]
+}
