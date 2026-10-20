@@ -159,6 +159,28 @@ def test_extra_order_sheet_urls_merges_lines_from_multiple_links(env):
     assert merged["order_tab"] is None and merged["order_tabs"] == []
 
 
+def test_breakdown_camp_across_multiple_order_links_for_single_brand(env):
+    """1 brand, gộp từ 2 link order RIÊNG BIỆT trở lên (``extra_order_sheet_urls``) -> ``breakdown_mode='camp'``
+    tách riêng bảng doanh thu/sản phẩm theo TỪNG LINK (``link_index``), không chỉ theo tab trong CÙNG 1 link
+    như :func:`test_breakdown_camp_merges_all_candidate_tabs_of_1_brand` ở ``test_order_files.py`` — đúng tình
+    huống dữ liệu 1 brand nằm rải trên nhiều file order khác nhau theo từng đợt chạy/camp."""
+    env.sheets.sheets[sheet_id(SECOND_ORDER_URL)] = order_rows([
+        ["04/05/2026", "FB101", "Đã giao", "Organica", "ORG-01", "Serum Organica", 1, 1_200_000],
+    ])
+    base = env.post("/api/v1/bbnt/preview", ORGANICA).json()
+    payload = {**ORGANICA, "extra_order_sheet_urls": [SECOND_ORDER_URL], "breakdown_mode": "camp",
+              "camp_names": [{"link_index": 0, "tab": "ORDER", "name": "Link chính"},
+                             {"link_index": 1, "tab": "ORDER", "name": "Link phụ"}]}
+    b = env.post("/api/v1/bbnt/preview", payload).json()
+    assert b["breakdown_kind"] == "camp"
+    camps = b["brand_breakdown"]
+    assert [c["brand_name"] for c in camps] == ["Link chính", "Link phụ"]
+    assert [c["brand_code"] for c in camps] == [None, None]
+    assert Decimal(camps[0]["nmv"]) == Decimal(base["figures"]["nmv"])
+    assert Decimal(camps[1]["nmv"]) == 1_200_000
+    assert Decimal(b["figures"]["nmv"]) == Decimal(base["figures"]["nmv"]) + 1_200_000
+
+
 def test_generate_rejects_split_tab_mode(env):
     """``tab_mode='split'`` chỉ dùng được qua ``/preview-split`` — gọi ``/generate`` thẳng phải báo lỗi."""
     r = env.post("/api/v1/bbnt/generate", {**ORGANICA, "tab_mode": "split", "tab_campaign_names": {"ORDER": "X"}})
@@ -257,6 +279,8 @@ def test_mapping_mismatch(env):
     {"contract_no": ""},
     {"collected_on_behalf": -1},
     {"unknown": 1},
+    {"extra_order_sheet_urls": [f"https://docs.google.com/spreadsheets/d/1ExtraLink{i:02d}AbCdEfGhIjKlMnOp/edit"
+                               for i in range(10)]},                      # tối đa 9 (10 link cả order_sheet_url)
 ])
 def test_payload_validation(env, bad):
     body = {k: v for k, v in {**ORGANICA, **bad}.items() if v is not None}
