@@ -158,8 +158,30 @@ def choose_order_tab(book: OrderWorkbook, config: MappingConfig, *, mapping_code
                            mapping_tab=config.sheet_name) for t in candidates}
     best = max(scores.values())
     top = [t for t, s in scores.items() if s == best]
-    if best > 0 and len(top) == 1:
+    if best > 0 and len(top) == 1 and not _gid_tiebreak_masks_multi_camp_file(
+        top[0], candidates, scope=scope, campaign=campaign, months=months, config=config,
+    ):
         return TabChoice(top[0], candidates, "best_match")
     ranked = sorted(candidates, key=lambda t: -scores[t])
     raise fail("ORDER_TAB_AMBIGUOUS", f"File order có {len(candidates)} tab đơn hàng — chọn tab cần nghiệm thu",
                status=409, details={"tabs": ranked})
+
+
+def _gid_tiebreak_masks_multi_camp_file(winner: str, candidates: list[str], *, scope: Scope, campaign: str,
+                                        months: Sequence[YearMonth], config: MappingConfig) -> bool:
+    """``score_tab``'s "đang mở trong link (gid)" bonus (+2) can break a tie — but ONLY a tie that already has
+    some real content signal behind it (vd 2 tab cùng khớp brand+chương trình ngang điểm nhau: gid chọn giúp 1
+    trong 2 bản ghi/sửa đổi trùng nhau là hợp lý).
+
+    Khi TẤT CẢ tab đang hoà đều hoàn toàn không có tín hiệu nội dung nào (không tab nào khớp brand/chương
+    trình/kỳ nghiệm thu) — kể cả chỉ 2 tab — đây là dấu hiệu của 1 file nhiều tab/camp cùng 1 brand (vd
+    "CAMPMIX7/8/9", mỗi tab 1 đợt chạy, hay chỉ 2 đợt). Để gid (tín hiệu rất yếu: chỉ vì người dùng đang mở
+    đúng tab đó khi copy link) âm thầm chọn 1 tab trong trường hợp này sẽ lặng lẽ bỏ sót dữ liệu của (các) camp
+    còn lại. Trả về ``True`` để buộc báo ``ORDER_TAB_AMBIGUOUS`` thay vì tự chọn — màn ambiguous trên web đã có
+    sẵn lối "Gộp tất cả thành 1 BBNT" (``breakdown_mode='camp'``) đúng cho trường hợp này, và tên camp giờ tự
+    lấy theo tên tab/link (xem ``BbntGenerator._read_camp_breakdown``) nên không cần gõ tay."""
+    content_scores = {t: score_tab(t, scope=scope, campaign=campaign, months=months, gid_tab=None,
+                                   mapping_tab=config.sheet_name) for t in candidates}
+    content_best = max(content_scores.values())
+    content_top = [t for t, s in content_scores.items() if s == content_best]
+    return content_best == 0 and len(content_top) > 1 and winner in content_top
