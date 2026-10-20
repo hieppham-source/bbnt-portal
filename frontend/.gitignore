@@ -7,3 +7,10 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 .netlify/
+
+# Cloudflare Workers (adapter @opennextjs/cloudflare)
+.open-next/
+.wrangler/
+.dev.vars
+.dev.vars.*
+cloudflare-env.d.ts
