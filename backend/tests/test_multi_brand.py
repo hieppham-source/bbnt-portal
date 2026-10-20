@@ -240,7 +240,7 @@ def test_breakdown_mode_brand_fallback_generates_docx_with_separate_blocks(env):
 
 def test_breakdown_mode_camp_splits_tables_by_camp_shared_commission(env):
     """``breakdown_mode='camp'``: mỗi tab (dù chứa nhiều brand trộn lẫn) là 1 camp riêng, commission vẫn tính
-    trên TỔNG — không được dùng tên tab làm tên camp (``camp_names`` bắt buộc)."""
+    trên TỔNG. ``camp_names`` ở đây chỉ dùng để ĐỔI tên — vẫn hợp lệ không đổi gì cả (xem test kế tiếp)."""
     put(env, {"CAMP MIX": CAMP_MIX, "CAMP FOOD": CAMP_FOOD})
     payload = {**GROUP, "breakdown_mode": "camp",
               "camp_names": [{"link_index": 0, "tab": "CAMP MIX", "name": "Mix"},
@@ -258,12 +258,36 @@ def test_breakdown_mode_camp_splits_tables_by_camp_shared_commission(env):
     assert camps["Mix"]["order_tabs"] == ["CAMP MIX"] and camps["Food"]["order_tabs"] == ["CAMP FOOD"]
 
 
-def test_breakdown_mode_camp_requires_a_name_for_every_tab(env):
+def test_breakdown_mode_camp_names_default_to_the_tab_name(env):
+    """``camp_names`` giờ TUỲ CHỌN — không truyền gì cả (hoặc bỏ trống 1 vài tab) thì tên camp tự lấy thẳng
+    theo tên tab/sheet đó, không còn báo ``TAB_CAMPAIGN_NAMES_REQUIRED`` nữa."""
     put(env, {"CAMP MIX": CAMP_MIX, "CAMP FOOD": CAMP_FOOD})
+    r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp"})
+    assert r.status_code == 200, r.text
+    camps = {x["brand_name"]: x for x in r.json()["brand_breakdown"]}
+    assert set(camps) == {"CAMP MIX", "CAMP FOOD"}
+    assert Decimal(camps["CAMP MIX"]["nmv"]) == 10_000_000 and Decimal(camps["CAMP FOOD"]["nmv"]) == 5_000_000
+
+    # đổi tên 1 tab, tab còn lại vẫn tự lấy theo tên tab
     r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp",
                  "camp_names": [{"link_index": 0, "tab": "CAMP MIX", "name": "Mix"}]})
-    assert r.status_code == 409 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_REQUIRED"
-    assert r.json()["details"]["tabs"] == [{"link_index": 0, "tab": "CAMP FOOD"}]
+    assert r.status_code == 200, r.text
+    camps = {x["brand_name"] for x in r.json()["brand_breakdown"]}
+    assert camps == {"Mix", "CAMP FOOD"}
+
+
+def test_breakdown_mode_camp_default_names_colliding_across_links_get_disambiguated(env):
+    """2 link order khác nhau tình cờ có tab trùng tên nhau -> tên camp MẶC ĐỊNH (lấy theo tên tab) sẽ trùng
+    nhau -> tự thêm hậu tố tên link để không bị hiểu nhầm là 1 camp."""
+    put(env, {"CAMP MIX": CAMP_MIX})
+    second_url = "https://docs.google.com/spreadsheets/d/1SecondShiseidoCampMixAbCdEfGh/edit"
+    env.sheets.sheets[sheet_id(second_url)] = {"CAMP MIX": CAMP_FOOD}      # tên tab trùng "CAMP MIX" ở cả 2 link
+    r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp", "extra_order_sheet_urls": [second_url]})
+    assert r.status_code == 200, r.text
+    camps = {x["brand_name"]: x for x in r.json()["brand_breakdown"]}
+    assert set(camps) == {"CAMP MIX (Link chính)", "CAMP MIX (Link phụ #1)"}
+    assert Decimal(camps["CAMP MIX (Link chính)"]["nmv"]) == 10_000_000
+    assert Decimal(camps["CAMP MIX (Link phụ #1)"]["nmv"]) == 5_000_000
 
 
 def test_breakdown_mode_camp_rejects_duplicate_names(env):
