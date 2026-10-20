@@ -16,8 +16,9 @@ from app.services.sheets import parse_sheet_url
 TabMode = Literal["auto", "split"]
 
 #: None (mặc định, hành vi cũ — tự nhận diện link "1 tab/brand" nếu có) | "brand" (tách bảng doanh thu/huỷ theo
-#: brand, CHỈ dùng khi nghiệm thu group/nhiều brand cùng lúc) | "camp" (tách theo camp/đợt chạy, bắt buộc kèm
-#: ``camp_names`` — dùng được cho MỌI phạm vi, kể cả 1 brand), xem docstring đầu ``app.services.generator``.
+#: brand, CHỈ dùng khi nghiệm thu group/nhiều brand cùng lúc) | "camp" (tách theo camp/đợt chạy, tên camp mặc
+#: định lấy theo tên tab/sheet, ``camp_names`` tuỳ chọn để đổi tên — dùng được cho MỌI phạm vi, kể cả 1 brand),
+#: xem docstring đầu ``app.services.generator``.
 BreakdownMode = Literal["brand", "camp"]
 
 
@@ -29,7 +30,8 @@ class CampLabelIn(BaseModel):
 
     link_index: int = Field(ge=0, le=9)
     tab: str = Field(min_length=1, max_length=200)
-    name: str = Field(min_length=1, max_length=100)
+    name: str = Field(default="", max_length=100,
+                      description="Tuỳ chọn — để trống thì tự lấy theo tên tab/sheet đó")
 
 
 class BbntRequest(BaseModel):
@@ -55,7 +57,8 @@ class BbntRequest(BaseModel):
     GIỜ cả 2 cùng lúc) — đây là lựa chọn THAY THẾ việc "gộp nhiều tab không tách gì" (không còn tồn tại riêng):
     ``"brand"`` tách theo brand (dùng tab riêng từng brand nếu có sẵn, không thì nhóm theo cột Brand) — CHỈ
     dùng khi nghiệm thu group hoặc từ 2 brand cùng lúc trở lên; ``"camp"`` tách theo camp/đợt chạy (mỗi tab ở
-    mỗi link là 1 camp, bắt buộc đặt tên riêng qua ``camp_names``) — dùng được cho MỌI phạm vi, kể cả 1 brand.
+    mỗi link là 1 camp, tên camp mặc định lấy theo tên tab/sheet đó — ``camp_names`` tuỳ chọn, chỉ dùng để đổi
+    tên) — dùng được cho MỌI phạm vi, kể cả 1 brand.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -91,7 +94,8 @@ class BbntRequest(BaseModel):
         default=None, description="brand | camp — xem docstring lớp này")
     camp_names: list[CampLabelIn] = Field(
         default_factory=list, max_length=20,
-        description="Bắt buộc khi breakdown_mode='camp': tên camp riêng cho từng (link_index, tab)")
+        description="Tuỳ chọn khi breakdown_mode='camp': đổi tên camp cho (link_index, tab) muốn đổi — "
+                    "không truyền/để trống thì tự lấy theo tên tab/sheet đó")
 
     @field_validator("channel", "entity")
     @classmethod
