@@ -8,12 +8,14 @@ export type Channel = string
 export type TabMode = "auto" | "split"
 
 // "brand" (tách bảng doanh thu/huỷ VÀ danh sách sản phẩm theo brand, commission chung) — CHỈ dùng khi nghiệm
-// thu group/nhiều brand cùng lúc | "camp" (tách theo camp/đợt chạy, bắt buộc kèm camp_names) — dùng được cho
-// MỌI phạm vi, kể cả 1 brand. Không dùng cùng order_tab.
+// thu group/nhiều brand cùng lúc | "camp" (tách theo camp/đợt chạy, tên camp tự lấy theo tên tab/sheet — xem
+// camp_names bên dưới) — dùng được cho MỌI phạm vi, kể cả 1 brand. Không dùng cùng order_tab.
 export type BreakdownMode = "brand" | "camp"
 
 // 1 camp = 1 tab trong 1 link order cụ thể. link_index: 0 = order_sheet_url chính, 1.. = vị trí (1-based)
-// trong extra_order_sheet_urls (tên tab có thể trùng giữa 2 link nên cần cả link_index lẫn tab).
+// trong extra_order_sheet_urls (tên tab có thể trùng giữa 2 link nên cần cả link_index lẫn tab). "name" chỉ
+// dùng để ĐỔI tên camp khi muốn — không bắt buộc, portal không còn gửi field này (backend tự lấy theo tên
+// tab/sheet, tự thêm hậu tố link khi trùng tên giữa 2 link order).
 export type CampLabel = { link_index: number; tab: string; name: string }
 
 export type BbntRequest = {
@@ -21,7 +23,9 @@ export type BbntRequest = {
   entity: string
   brand_codes?: string[] // 1 brand, hoặc nhiều brand cùng group
   group_code?: string // hoặc cả group (chỉ 1 trong 2)
-  contract_no: string // LUÔN bắt buộc — hợp đồng/% hoa hồng áp dụng do người làm tự chọn
+  contract_no: string // LUÔN bắt buộc — hợp đồng/% hoa hồng áp dụng do người làm tự chọn, hoặc tự gõ khi manual_contract
+  manual_contract?: boolean // hợp đồng CHƯA có trong Sheet master — bỏ qua tra cứu, Bên A/% hoa hồng/VAT/ngày ký
+  // để placeholder (hoa hồng/VAT tính ra = 0), người làm tự điền tay trên file .docx đã tải
   bbnt_suffix: string // "Đuôi biên bản nghiệm thu" người làm tự gõ (vd "BDAY 05") — ráp thẳng vào số BBNT,
   // KHÔNG còn là kỳ nghiệm thu; link order mặc định tính TOÀN BỘ dòng đơn, không lọc theo tháng nữa
   campaign_name: string
@@ -35,7 +39,7 @@ export type BbntRequest = {
   tab_mode?: TabMode
   tab_campaign_names?: Record<string, string> // bắt buộc khi tab_mode === "split": {tên tab: tên chương trình riêng}
   breakdown_mode?: BreakdownMode
-  camp_names?: CampLabel[] // bắt buộc khi breakdown_mode === "camp"
+  camp_names?: CampLabel[] // tuỳ chọn — chỉ cần khi muốn ĐỔI tên camp khỏi tên tab/sheet mặc định
 }
 
 export type BrandBreakdownOut = {
@@ -131,6 +135,9 @@ export type PreviewOut = {
   // "brand" cũng dùng cho link tự nhận diện "1 tab/brand" dù không chọn breakdown_mode)
   breakdown_kind: "none" | "brand" | "camp"
   brand_breakdown: BrandBreakdownOut[]
+  // BbntRequest.manual_contract — true thì contract/hoa hồng/VAT ở trên đều là PLACEHOLDER (Bên A chưa điền,
+  // hoa hồng/VAT = 0) — PHẢI cảnh báo người dùng tự điền tay trước khi dùng file để thanh toán.
+  manual_contract: boolean
   order_line_count: number
   other_brand_line_count: number
   order_tab: string | null
