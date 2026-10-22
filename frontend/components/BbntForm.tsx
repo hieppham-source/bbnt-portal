@@ -260,9 +260,12 @@ export default function BbntForm() {
       }
     } catch (e) {
       const err = e as ApiError
-      // breakdown_mode === "camp" lần đầu (campSources chưa biết) -> backend trả danh sách (link, tab) cần đặt
-      // tên qua lỗi này; hiện form nhập tên thay vì báo lỗi thô
-      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && bm === "camp" && !campSources) {
+      // breakdown_mode === "camp" -> backend trả danh sách (link, tab) còn thiếu tên qua lỗi này; LUÔN hiện/cập
+      // nhật form nhập tên thay vì báo lỗi thô — kể cả KHÔNG PHẢI lần đầu (campSources đã có từ trước), vì
+      // "details.tabs" ở đây là MẢNG OBJECT {link_index, tab, link_label} (khác hẳn "details.tabs" dạng mảng
+      // chuỗi của lỗi cùng mã này ở chế độ tách BBNT theo tab/tab_mode="split") — để lọt xuống ErrorBox dùng
+      // chung bên dưới (vốn chỉ hiểu "tabs" là mảng chuỗi) sẽ crash React (render object làm children).
+      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && bm === "camp") {
         const tabs = (err.details as { tabs?: { link_index: number; tab: string }[] } | undefined)?.tabs
         if (tabs && tabs.length) {
           setCampSources(tabs)
@@ -1060,8 +1063,16 @@ function ErrorBox({
   onCombine: () => void
   onStartSplit: (tabs: string[]) => void
 }) {
-  const d = error.details as { contracts?: ContractChoice[]; mappings?: string[]; tabs?: string[] } | RowIssue[] | undefined
+  const d = error.details as { contracts?: ContractChoice[]; mappings?: string[]; tabs?: unknown[] } | RowIssue[] | undefined
   const ambiguous = error.code === "ORDER_TAB_AMBIGUOUS"
+  // "details.tabs" ở ORDER_TAB_AMBIGUOUS/MAPPING_MISMATCH/TAB_CAMPAIGN_NAMES_REQUIRED (chế độ split) luôn là
+  // mảng CHUỖI tên tab. TAB_CAMPAIGN_NAMES_REQUIRED ở chế độ breakdown_mode="camp" dùng CHUNG mã lỗi này nhưng
+  // "details.tabs" lại là mảng OBJECT {link_index, tab, link_label} — case đó luôn được chặn/xử lý riêng ở
+  // run() (hiện form "Đặt tên camp") trước khi tới đây; chỉ render danh sách bên dưới khi chắc chắn là chuỗi,
+  // để lỡ có lọt xuống đây cũng không render object làm React children (crash "Minified React error #31").
+  const tabNames = !Array.isArray(d) && Array.isArray(d?.tabs) && d.tabs.every((t) => typeof t === "string")
+    ? (d.tabs as string[])
+    : undefined
   return (
     <div className="alert error">
       <strong>{error.message}</strong>
@@ -1089,10 +1100,10 @@ function ErrorBox({
           </button>
         </p>
       )}
-      {!Array.isArray(d) && d?.tabs && d.tabs.length > 0 && (
+      {tabNames && tabNames.length > 0 && (
         <>
           <ul>
-            {d.tabs.map((t) => (
+            {tabNames.map((t) => (
               <li key={t}>
                 {t}{" "}
                 {error.code !== "MAPPING_MISMATCH" && (
@@ -1108,7 +1119,7 @@ function ErrorBox({
               <button type="button" onClick={onCombine}>
                 Gộp tất cả thành 1 BBNT
               </button>
-              <button type="button" onClick={() => onStartSplit(d.tabs!)}>
+              <button type="button" onClick={() => onStartSplit(tabNames)}>
                 Tách thành nhiều BBNT riêng
               </button>
             </p>
