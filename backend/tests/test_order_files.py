@@ -143,16 +143,23 @@ def test_breakdown_camp_merges_all_candidate_tabs_of_1_brand(env):
     assert all(Decimal(c["nmv"]) == 3_500_000 and Decimal(c["gmv_estimated"]) == 6_000_000 for c in camps)
 
 
-def test_breakdown_camp_names_default_to_tab_name_without_camp_names(env):
-    """``camp_names`` tuỳ chọn — bỏ hẳn, không truyền gì cả — tên camp tự lấy theo tên tab/sheet đó (đúng case
-    thật Milktouch: tab "CAMPMIX7/8/9", không cần gõ tay tên camp nữa)."""
+def test_breakdown_camp_requires_names_for_every_tab(env):
+    """``camp_names`` BẮT BUỘC đặt tên riêng cho TỪNG camp — không truyền gì cả (case Milktouch: tab
+    "CAMPMIX7/8/9") báo lỗi ``TAB_CAMPAIGN_NAMES_REQUIRED`` thay vì tự lấy theo tên tab/sheet."""
     put(env, {"CAMPMIX7": ORG, "CAMPMIX8": ORG, "CAMPMIX9": ORG})
     r = env.post("/api/v1/bbnt/preview", {**NO_GID, "breakdown_mode": "camp"})
+    assert r.status_code == 409 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_REQUIRED"
+
+    r = env.post("/api/v1/bbnt/preview", {**NO_GID, "breakdown_mode": "camp", "camp_names": [
+        {"link_index": 0, "tab": "CAMPMIX7", "name": "Camp 7"},
+        {"link_index": 0, "tab": "CAMPMIX8", "name": "Camp 8"},
+        {"link_index": 0, "tab": "CAMPMIX9", "name": "Camp 9"},
+    ]})
     assert r.status_code == 200, r.text
     b = r.json()
     camps = {c["brand_name"]: c for c in b["brand_breakdown"]}
-    assert set(camps) == {"CAMPMIX7", "CAMPMIX8", "CAMPMIX9"}
-    assert camps["CAMPMIX7"]["order_tabs"] == ["CAMPMIX7"]
+    assert set(camps) == {"Camp 7", "Camp 8", "Camp 9"}
+    assert camps["Camp 7"]["order_tabs"] == ["CAMPMIX7"]
 
 
 def test_preview_split_returns_one_bbnt_per_tab_with_r_suffix(env):

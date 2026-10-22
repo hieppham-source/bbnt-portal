@@ -49,10 +49,11 @@ class PartyA:
         return cls(**{k: (snap.get(k) or "") for k in cls.__dataclass_fields__})
 
 
-def program_name(scope_display: str, campaign_name: str, number: BbntNumber) -> str:
-    """'ORGANICA BDAY BDAY-05' — phần cuối là đuôi biên bản nghiệm thu người làm tự gõ (xem
+def program_name(campaign_name: str, number: BbntNumber) -> str:
+    """'BDAY BDAY-05' — KHÔNG tự ghép brand/scope vào đầu (người làm tự gõ brand vào Tên chương trình nếu
+    muốn, tránh bị lặp 2 lần tên brand trên BBNT). Phần cuối là đuôi biên bản nghiệm thu người làm tự gõ (xem
     ``app.core.numbering.normalize_suffix``), KHÔNG còn là kỳ nghiệm thu."""
-    return " ".join(x for x in (scope_display.strip().upper(), campaign_name.strip(), number.suffix) if x)
+    return " ".join(x for x in (campaign_name.strip(), number.suffix) if x)
 
 
 def signature_name(representative: str) -> str:

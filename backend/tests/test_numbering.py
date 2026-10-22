@@ -111,7 +111,7 @@ class TestIssueMonthTimezone:
     def test_clock_injection_used_when_issued_at_missing(self):
         n = generate_bbnt_number(brands=ORGANICA, entity="EZS", channel="FB", suffix="BDAY 05",
                                  clock=lambda: datetime(2026, 5, 31, 17, 1, tzinfo=UTC))
-        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05"
+        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY 05"
         assert n.issue_date == date(2026, 6, 1)   # ngày VN, không phải 31/05 UTC
 
     def test_issue_date_is_vn_date(self):
@@ -124,20 +124,22 @@ class TestGenerate:
     def test_issue_month_independent_of_suffix(self):
         """Tháng lập chỉ phụ thuộc issued_at — suffix là chữ người làm tự gõ, không ràng buộc gì với tháng."""
         n = gen(suffix="BDAY 01", issued_at=datetime(2026, 7, 2, 2, 0, tzinfo=UTC))
-        assert str(n) == "07.26/BBNT-ORGANICA-EZ-FB-BDAY-01"
+        assert str(n) == "07.26/BBNT-ORGANICA-EZ-FB-BDAY 01"
 
     def test_full_examples(self):
         shiseido = [BrandRef("SHISEIDO", "SHISEIDO_GRP"), BrandRef("CLE_DE_PEAU", "SHISEIDO_GRP")]
         n = gen(brands=shiseido, entity="SASSY", channel="TTS", suffix="q3 camp",
                 issued_at=datetime(2026, 10, 1, 1, 0, tzinfo=UTC))
-        assert str(n) == "10.26/BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP"
-        assert n.business_key == "BBNT-SHISEIDO_GRP-SS-TTS-Q3-CAMP"
+        assert str(n) == "10.26/BBNT-SHISEIDO_GRP-SS-TTS-q3 camp"
+        assert n.business_key == "BBNT-SHISEIDO_GRP-SS-TTS-q3 camp"
         assert n.scope_prefix == "BBNT-SHISEIDO_GRP-SS-TTS-"
 
-    def test_suffix_is_normalized(self):
+    def test_suffix_kept_literal(self):
+        """normalize_suffix GIỮ NGUYÊN 100% như đã gõ — chỉ bỏ khoảng trắng thừa đầu/cuối, không in hoa,
+        không gộp khoảng trắng/ký tự nào ở giữa."""
         n = gen(suffix="  bday   05  ")
-        assert n.suffix == "BDAY-05"
-        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05"
+        assert n.suffix == "bday   05"
+        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-bday   05"
 
     def test_blank_suffix_rejected(self):
         with pytest.raises(NumberingError):
@@ -149,8 +151,8 @@ class TestGenerate:
 
     def test_revision_suffix(self):
         n = gen().with_revision(2)
-        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY-05-R2"
-        assert n.business_key == "BBNT-ORGANICA-EZ-FB-BDAY-05"
+        assert str(n) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY 05-R2"
+        assert n.business_key == "BBNT-ORGANICA-EZ-FB-BDAY 05"
 
     def test_negative_revision_rejected(self):
         with pytest.raises(NumberingError):
@@ -221,8 +223,6 @@ class TestParseNumber:
     @pytest.mark.parametrize("value", [
         "6.26/BBNT-ORGANICA-EZ-FB-BDAY-05",
         "06.26/BBNT-ORGANICA-EZ-FB-",
-        "06.26/BBNT-ORGANICA-EZ-FB-bday-05",
-        "06.26/BBNT-ORGANICA-EZ-FB-BDAY--05",
         "06.26/BNT-ORGANICA-EZ-FB-BDAY-05",
     ])
     def test_rejects(self, value):
@@ -230,8 +230,9 @@ class TestParseNumber:
             parse_bbnt_number(value)
 
     def test_generated_numbers_always_parse(self):
-        """Property-style: mọi tổ hợp sinh ra đều parse ngược đúng."""
-        suffix_pool = ["BDAY 01", "Q3 CAMP", "DOT-2", "MIX FOOD 09"]
+        """Property-style: mọi tổ hợp sinh ra đều parse ngược đúng — kể cả suffix gõ tự do (khoảng trắng,
+        chữ thường, dấu gạch ngang bất kỳ chỗ nào) vì ``normalize_suffix`` không còn chuẩn hoá charset."""
+        suffix_pool = ["BDAY 01", "Q3 CAMP", "DOT-2", "MIX FOOD 09", "bday--05", "q3 camp"]
         issued = datetime(2026, 5, 1, tzinfo=UTC)
         for suffix in suffix_pool:
             for entity, channel in itertools.product(["EZS", "SASSY"], ["FB", "TTS"]):

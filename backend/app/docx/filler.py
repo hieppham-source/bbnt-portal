@@ -14,7 +14,16 @@ Cú pháp template (soạn thẳng trong Word được, kể cả khi Word cắt
   ngoài khối (vd bảng TỔNG CỘNG tất cả brand). Dùng khi 1 BBNT gộp nhiều brand (group) và cần liệt kê sản
   phẩm/doanh thu RIÊNG từng brand trước khi tính hoa hồng trên TỔNG. 2 paragraph marker và khối mẫu gốc bị
   xoá sau khi nhân bản; ``brands=()`` (mặc định) -> khối bị xoá trắng, tài liệu không đổi so với trước khi
-  có tính năng này (template không có marker thì cũng bỏ qua hoàn toàn, không ảnh hưởng).
+  có tính năng này (template không có marker thì cũng bỏ qua hoàn toàn, không ảnh hưởng). Từ khối thứ 2 trở
+  đi, 1 paragraph trống được chèn NGAY TRƯỚC khối đó để tách rời các bảng theo brand/camp liên tiếp nhau
+  (không chèn trước khối đầu tiên).
+* Đoạn/bảng nằm giữa 2 paragraph ``{{summary_section_start}}`` và ``{{summary_section_end}}`` (cùng quy tắc vị
+  trí như brand_section ở trên) là **khối TUỲ CHỌN theo cờ boolean** (``show_summary``, khác ``brand_section``
+  ở chỗ không nhân bản — chỉ GIỮ hay XOÁ): ``show_summary=True`` (mặc định) -> chỉ xoá 2 paragraph marker, GIỮ
+  NGUYÊN nội dung ở giữa (tài liệu không đổi so với trước khi có tính năng này); ``show_summary=False`` -> xoá
+  LUÔN toàn bộ nội dung ở giữa (kể cả 2 marker). Dùng để ẩn bảng TỔNG HỢP sản phẩm top-level khi BBNT đã tách
+  riêng từng camp (mỗi camp đã có bảng + TỔNG CỘNG riêng trong brand_section) — tránh lặp lại 1 bảng tổng
+  không cần thiết. Template không có marker thì bỏ qua hoàn toàn, không ảnh hưởng gì.
 
 Bảo đảm:
 
@@ -57,6 +66,8 @@ ITEM_PREFIX = "item."
 BRAND_PREFIX = "brand."
 BRAND_START = "brand_section_start"
 BRAND_END = "brand_section_end"
+SUMMARY_START = "summary_section_start"
+SUMMARY_END = "summary_section_end"
 
 #: Chuỗi ngày tháng pháp lý — KHÔNG được thay đổi bởi quá trình fill.
 LEGAL_DATE_RE = re.compile(
@@ -149,7 +160,7 @@ class BbntDocxRenderer:
                     if any(a < m.end() and m.start() < b for a, b in legal):
                         raise TemplateError(f"Token {m.group(0)} nằm trong chuỗi ngày pháp lý: {text!r}")
                     name = m.group(1)
-                    if name in (BRAND_START, BRAND_END):
+                    if name in (BRAND_START, BRAND_END, SUMMARY_START, SUMMARY_END):
                         continue
                     if name.startswith(ITEM_PREFIX):
                         row = _row_of(p)
@@ -173,6 +184,7 @@ class BbntDocxRenderer:
         items: Sequence[Mapping[str, str]] = (),
         *,
         brands: Sequence[BrandBlock] = (),
+        show_summary: bool = True,
         strip_comments: bool = False,
         seed: int | None = None,
     ) -> RenderResult:
@@ -183,6 +195,9 @@ class BbntDocxRenderer:
             items: mỗi phần tử là 1 dòng bảng sản phẩm, key = phần sau ``item.`` (``name``, ``quantity``...).
             brands: khối lặp lại theo brand (xem ``{{brand_section_start}}`` trong docstring module) —
                 rỗng (mặc định) hoặc template không có marker -> không đổi gì so với trước khi có tính năng.
+            show_summary: ``False`` -> ẩn khối ``{{summary_section_start}}``/``{{summary_section_end}}`` (xem
+                docstring module) — dùng khi đã tách riêng từng camp, không cần bảng tổng hợp top-level nữa.
+                Mặc định ``True`` (giữ nguyên, hành vi như trước khi có tính năng).
             strip_comments: xoá marker comment hướng dẫn nội bộ khỏi bản xuất (mặc định giữ nguyên như template).
             seed: seed sinh paraId cho dòng/khối clone (để output tái lập được trong test).
         """
@@ -191,6 +206,7 @@ class BbntDocxRenderer:
         legal_before = self._snapshot_legal_text(doc)
         rng = random.Random(seed)
 
+        self._apply_optional_section(doc, SUMMARY_START, SUMMARY_END, keep=show_summary)
         brand_item_rows = self._expand_brand_sections(doc, brands, rng)
         rows = self._expand_item_rows(doc, items, rng) + brand_item_rows
         for root in iter_story_roots(doc):
@@ -298,7 +314,11 @@ class BbntDocxRenderer:
             while node is not None and node is not end:
                 protos.append(node)
                 node = node.getnext()
-            for brand in brands:
+            for bi, brand in enumerate(brands):
+                if bi > 0:
+                    # Tách rời các bảng theo brand/camp liên tiếp nhau bằng 1 paragraph trống (không chèn
+                    # trước khối đầu tiên, giữ nguyên hiển thị khi chỉ có 1 khối).
+                    end.addprevious(etree.Element(W_P))
                 clones = [copy.deepcopy(el) for el in protos]
                 for el in clones:
                     renew_paragraph_ids(el, rng)
@@ -309,6 +329,36 @@ class BbntDocxRenderer:
             for el in (start, *protos, end):
                 el.getparent().remove(el)
         return item_rows
+
+    @staticmethod
+    def _apply_optional_section(doc: DocxDocument, start_tag: str, end_tag: str, *, keep: bool) -> None:
+        """Đoạn/bảng nằm giữa 2 paragraph ``{{start_tag}}``/``{{end_tag}}`` (xem ``{{summary_section_start}}``
+        trong docstring module) — ``keep=True`` chỉ xoá 2 paragraph marker, GIỮ NGUYÊN nội dung ở giữa;
+        ``keep=False`` xoá LUÔN toàn bộ nội dung ở giữa (kể cả 2 marker). Template không có marker -> bỏ qua."""
+        for root in iter_story_roots(doc):
+            start = end = None
+            for child in root:
+                if child.tag != W_P:
+                    continue
+                text = paragraph_text(child).strip()
+                if start is None and text == "{{" + start_tag + "}}":
+                    start = child
+                elif start is not None and text == "{{" + end_tag + "}}":
+                    end = child
+                    break
+            if start is None or end is None:
+                continue
+            if keep:
+                for el in (start, end):
+                    el.getparent().remove(el)
+                continue
+            middle: list[etree._Element] = []
+            node = start.getnext()
+            while node is not None and node is not end:
+                middle.append(node)
+                node = node.getnext()
+            for el in (start, *middle, end):
+                el.getparent().remove(el)
 
     @staticmethod
     def _snapshot_legal_text(doc: DocxDocument) -> list[tuple[etree._Element, list[str]]]:

@@ -8,14 +8,13 @@ export type Channel = string
 export type TabMode = "auto" | "split"
 
 // "brand" (tách bảng doanh thu/huỷ VÀ danh sách sản phẩm theo brand, commission chung) — CHỈ dùng khi nghiệm
-// thu group/nhiều brand cùng lúc | "camp" (tách theo camp/đợt chạy, tên camp tự lấy theo tên tab/sheet — xem
-// camp_names bên dưới) — dùng được cho MỌI phạm vi, kể cả 1 brand. Không dùng cùng order_tab.
+// thu group/nhiều brand cùng lúc | "camp" (tách theo camp/đợt chạy, BẮT BUỘC kèm camp_names — không tự lấy
+// theo tên tab/sheet) — dùng được cho MỌI phạm vi, kể cả 1 brand. Không dùng cùng order_tab.
 export type BreakdownMode = "brand" | "camp"
 
 // 1 camp = 1 tab trong 1 link order cụ thể. link_index: 0 = order_sheet_url chính, 1.. = vị trí (1-based)
-// trong extra_order_sheet_urls (tên tab có thể trùng giữa 2 link nên cần cả link_index lẫn tab). "name" chỉ
-// dùng để ĐỔI tên camp khi muốn — không bắt buộc, portal không còn gửi field này (backend tự lấy theo tên
-// tab/sheet, tự thêm hậu tố link khi trùng tên giữa 2 link order).
+// trong extra_order_sheet_urls (tên tab có thể trùng giữa 2 link nên cần cả link_index lẫn tab). "name" BẮT
+// BUỘC — không tự lấy theo tên tab/sheet.
 export type CampLabel = { link_index: number; tab: string; name: string }
 
 export type BbntRequest = {
@@ -39,7 +38,7 @@ export type BbntRequest = {
   tab_mode?: TabMode
   tab_campaign_names?: Record<string, string> // bắt buộc khi tab_mode === "split": {tên tab: tên chương trình riêng}
   breakdown_mode?: BreakdownMode
-  camp_names?: CampLabel[] // tuỳ chọn — chỉ cần khi muốn ĐỔI tên camp khỏi tên tab/sheet mặc định
+  camp_names?: CampLabel[] // bắt buộc khi breakdown_mode === "camp" — đặt tên riêng cho MỌI (link_index, tab)
 }
 
 export type BrandBreakdownOut = {

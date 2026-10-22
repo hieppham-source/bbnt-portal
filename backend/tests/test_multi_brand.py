@@ -258,36 +258,45 @@ def test_breakdown_mode_camp_splits_tables_by_camp_shared_commission(env):
     assert camps["Mix"]["order_tabs"] == ["CAMP MIX"] and camps["Food"]["order_tabs"] == ["CAMP FOOD"]
 
 
-def test_breakdown_mode_camp_names_default_to_the_tab_name(env):
-    """``camp_names`` giờ TUỲ CHỌN — không truyền gì cả (hoặc bỏ trống 1 vài tab) thì tên camp tự lấy thẳng
-    theo tên tab/sheet đó, không còn báo ``TAB_CAMPAIGN_NAMES_REQUIRED`` nữa."""
+def test_breakdown_mode_camp_requires_names_for_every_tab(env):
+    """``camp_names`` BẮT BUỘC đặt tên riêng cho MỌI (link_index, tab) đang gộp — không tự lấy theo tên
+    tab/sheet; thiếu tên dù chỉ 1 tab vẫn báo ``TAB_CAMPAIGN_NAMES_REQUIRED``."""
     put(env, {"CAMP MIX": CAMP_MIX, "CAMP FOOD": CAMP_FOOD})
     r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp"})
-    assert r.status_code == 200, r.text
-    camps = {x["brand_name"]: x for x in r.json()["brand_breakdown"]}
-    assert set(camps) == {"CAMP MIX", "CAMP FOOD"}
-    assert Decimal(camps["CAMP MIX"]["nmv"]) == 10_000_000 and Decimal(camps["CAMP FOOD"]["nmv"]) == 5_000_000
+    assert r.status_code == 409 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_REQUIRED"
 
-    # đổi tên 1 tab, tab còn lại vẫn tự lấy theo tên tab
+    # đặt tên 1 tab, còn thiếu CAMP FOOD -> vẫn báo lỗi
     r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp",
                  "camp_names": [{"link_index": 0, "tab": "CAMP MIX", "name": "Mix"}]})
+    assert r.status_code == 409 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_REQUIRED"
+
+    # đặt tên đủ cả 2 tab -> dùng đúng tên đã gõ, không liên quan gì tên tab/sheet
+    r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp",
+                 "camp_names": [{"link_index": 0, "tab": "CAMP MIX", "name": "Mix"},
+                                {"link_index": 0, "tab": "CAMP FOOD", "name": "Food"}]})
     assert r.status_code == 200, r.text
-    camps = {x["brand_name"] for x in r.json()["brand_breakdown"]}
-    assert camps == {"Mix", "CAMP FOOD"}
+    camps = {x["brand_name"]: x for x in r.json()["brand_breakdown"]}
+    assert set(camps) == {"Mix", "Food"}
+    assert Decimal(camps["Mix"]["nmv"]) == 10_000_000 and Decimal(camps["Food"]["nmv"]) == 5_000_000
 
 
-def test_breakdown_mode_camp_default_names_colliding_across_links_get_disambiguated(env):
-    """2 link order khác nhau tình cờ có tab trùng tên nhau -> tên camp MẶC ĐỊNH (lấy theo tên tab) sẽ trùng
-    nhau -> tự thêm hậu tố tên link để không bị hiểu nhầm là 1 camp."""
+def test_breakdown_mode_camp_requires_name_for_every_link_when_tabs_collide_across_links(env):
+    """2 link order khác nhau tình cờ có tab trùng tên nhau ("CAMP MIX" ở cả 2 link) — vẫn phải đặt tên riêng
+    cho TỪNG (link_index, tab), không tự suy ra theo tên tab hay tự thêm hậu tố tên link."""
     put(env, {"CAMP MIX": CAMP_MIX})
     second_url = "https://docs.google.com/spreadsheets/d/1SecondShiseidoCampMixAbCdEfGh/edit"
     env.sheets.sheets[sheet_id(second_url)] = {"CAMP MIX": CAMP_FOOD}      # tên tab trùng "CAMP MIX" ở cả 2 link
     r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp", "extra_order_sheet_urls": [second_url]})
+    assert r.status_code == 409 and r.json()["code"] == "TAB_CAMPAIGN_NAMES_REQUIRED"
+
+    r = env.post("/api/v1/bbnt/preview", {**GROUP, "breakdown_mode": "camp", "extra_order_sheet_urls": [second_url],
+                 "camp_names": [{"link_index": 0, "tab": "CAMP MIX", "name": "Mix link chính"},
+                                {"link_index": 1, "tab": "CAMP MIX", "name": "Mix link phụ"}]})
     assert r.status_code == 200, r.text
     camps = {x["brand_name"]: x for x in r.json()["brand_breakdown"]}
-    assert set(camps) == {"CAMP MIX (Link chính)", "CAMP MIX (Link phụ #1)"}
-    assert Decimal(camps["CAMP MIX (Link chính)"]["nmv"]) == 10_000_000
-    assert Decimal(camps["CAMP MIX (Link phụ #1)"]["nmv"]) == 5_000_000
+    assert set(camps) == {"Mix link chính", "Mix link phụ"}
+    assert Decimal(camps["Mix link chính"]["nmv"]) == 10_000_000
+    assert Decimal(camps["Mix link phụ"]["nmv"]) == 5_000_000
 
 
 def test_breakdown_mode_camp_rejects_duplicate_names(env):

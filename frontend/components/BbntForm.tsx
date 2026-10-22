@@ -6,6 +6,7 @@ import {
   ApiError,
   type BbntRequest,
   type BreakdownMode,
+  type CampLabel,
   generateBbnt,
   getMaster,
   type MasterOut,
@@ -19,14 +20,10 @@ import { pct, vnd, vnDate } from "@/lib/format"
 
 import { handleAuthError, reconsent, useIdToken } from "./useIdToken"
 
-/** Xem trước cách portal sẽ chuẩn hoá "đuôi biên bản nghiệm thu" người dùng gõ (chỉ để hiển thị — việc chuẩn
- * hoá thật sự luôn do backend làm qua `normalize_suffix`). */
+/** Xem trước "đuôi biên bản nghiệm thu" người dùng gõ sẽ ráp vào số BBNT — portal GIỮ NGUYÊN 100% như đã gõ
+ * (chỉ bỏ khoảng trắng thừa đầu/cuối), không in hoa, không đổi ký tự nào (xem `normalize_suffix` ở backend). */
 function previewSuffix(raw: string): string {
-  return raw
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+  return raw.trim()
 }
 
 type Mode = "brand" | "group"
@@ -80,10 +77,13 @@ export default function BbntForm() {
   const [splitResults, setSplitResults] = useState<PreviewOut[] | null>(null)
   const [downloadingTab, setDownloadingTab] = useState<string | null>(null)
 
-  // Tách bảng theo brand/camp (breakdown_mode) — bắt buộc chọn khi nghiệm thu group/nhiều brand cùng lúc.
-  // Cả 2 chiều đều không cần nhập gì thêm: "camp" tự đặt tên mỗi camp theo tên tab/sheet đó (xem
-  // app.services.generator._resolve_camp_names ở backend) — portal không còn bắt gõ tay tên camp nữa.
+  // Tách bảng theo brand/camp (breakdown_mode) — bắt buộc chọn khi nghiệm thu group/nhiều brand cùng lúc, hoặc
+  // khi gộp từ 2 link order trở lên. "brand" không cần nhập gì thêm; "camp" BẮT BUỘC đặt tên riêng cho từng
+  // (link, tab) — portal tự phát hiện danh sách tab/link cần đặt tên qua lỗi TAB_CAMPAIGN_NAMES_REQUIRED của
+  // lần xem trước đầu tiên.
   const [breakdownMode, setBreakdownMode] = useState<BreakdownMode | null>(null)
+  const [campSources, setCampSources] = useState<{ link_index: number; tab: string }[] | null>(null)
+  const [campNames, setCampNames] = useState<Record<string, string>>({})
 
   const loadMaster = useCallback(
     async (refresh = false) => {
@@ -121,7 +121,11 @@ export default function BbntForm() {
     setSplitNames({})
     setSplitResults(null)
     setBreakdownMode(null)
+    setCampSources(null)
+    setCampNames({})
   }
+
+  const campKey = (linkIndex: number, tab: string) => `${linkIndex}:${tab}`
 
   const brandsInChannel = useMemo(
     () => (master?.brands ?? []).filter((b) => b.channel === channel),
@@ -208,8 +212,13 @@ export default function BbntForm() {
   if (needsBreakdownChoice && !breakdownMode) {
     problems.push(isGroupScope ? "Chọn cách tách bảng: theo brand hay theo camp" : "Chọn cách tách bảng theo camp")
   }
+  if (breakdownMode === "camp" && campSources && campSources.some((s) => !(campNames[campKey(s.link_index, s.tab)] ?? "").trim()))
+    problems.push("Đặt tên camp cho đủ các tab/link bên dưới")
 
   function buildRequest(tab = orderTab, tm: TabMode = tabMode, bm: BreakdownMode | null = breakdownMode): BbntRequest {
+    const camps = bm === "camp" && campSources
+      ? campSources.map((s) => ({ ...s, name: (campNames[campKey(s.link_index, s.tab)] ?? "").trim() }))
+      : []
     return {
       channel,
       entity,
@@ -229,6 +238,7 @@ export default function BbntForm() {
       ...(tab ? { order_tab: tab } : {}),
       ...(tm !== "auto" ? { tab_mode: tm } : {}),
       ...(bm ? { breakdown_mode: bm } : {}),
+      ...(bm === "camp" ? { camp_names: camps as CampLabel[] } : {}),
     }
   }
 
@@ -250,6 +260,16 @@ export default function BbntForm() {
       }
     } catch (e) {
       const err = e as ApiError
+      // breakdown_mode === "camp" lần đầu (campSources chưa biết) -> backend trả danh sách (link, tab) cần đặt
+      // tên qua lỗi này; hiện form nhập tên thay vì báo lỗi thô
+      if (err.code === "TAB_CAMPAIGN_NAMES_REQUIRED" && bm === "camp" && !campSources) {
+        const tabs = (err.details as { tabs?: { link_index: number; tab: string }[] } | undefined)?.tabs
+        if (tabs && tabs.length) {
+          setCampSources(tabs)
+          setBusy(null)
+          return
+        }
+      }
       if (!handleAuthError(err.status, err.code)) setError({ message: err.message, code: err.code, details: err.details })
     } finally {
       setBusy(null)
@@ -262,6 +282,8 @@ export default function BbntForm() {
     setOrderTab(tab)
     setTabMode("auto")
     setBreakdownMode(null)
+    setCampSources(null)
+    setCampNames({})
     setSplitTabs(null)
     setSplitResults(null)
     setPreview(null)
@@ -271,13 +293,16 @@ export default function BbntForm() {
 
   // File order có nhiều tab/camp mơ hồ (ORDER_TAB_AMBIGUOUS) -> tách bảng theo CAMP (breakdown_mode="camp",
   // dùng được cho MỌI phạm vi kể cả 1 brand) rồi gộp lại thành 1 BBNT DUY NHẤT — thay cho "gộp không tách gì"
-  // cũ (tab_mode="combine", đã bỏ hẳn). Tên camp tự lấy theo tên tab/sheet (backend), không cần hỏi gì thêm.
+  // cũ (tab_mode="combine", đã bỏ hẳn). Backend sẽ báo TAB_CAMPAIGN_NAMES_REQUIRED ngay lần xem trước đầu tiên
+  // để portal hiện form đặt tên camp cho từng tab (xem nhánh xử lý lỗi trong run()).
   function runCombine() {
     setOrderTab("")
     setSplitTabs(null)
     setSplitResults(null)
     setTabMode("auto")
     setBreakdownMode("camp")
+    setCampSources(null)
+    setCampNames({})
     setPreview(null)
     setDownloaded(null)
     void run("preview", "", "auto", "camp")
@@ -287,6 +312,8 @@ export default function BbntForm() {
   // breakdown_mode — bỏ luôn nếu đang chọn tách bảng)
   function startSplit(tabs: string[]) {
     setBreakdownMode(null)
+    setCampSources(null)
+    setCampNames({})
     setSplitTabs(tabs)
     setSplitNames(Object.fromEntries(tabs.map((t) => [t, ""])))
     setSplitResults(null)
@@ -469,6 +496,34 @@ export default function BbntForm() {
                 Theo camp
               </button>
             </div>
+            {breakdownMode === "camp" && campSources === null && (
+              <p className="hint">Bấm "Xem trước" để portal liệt kê các tab/link cần đặt tên camp.</p>
+            )}
+          </fieldset>
+        )}
+
+        {/* Đặt tên camp — hiện độc lập với "needsBreakdownChoice" ở trên: file order 1 brand nhiều tab/camp mơ
+            hồ (ORDER_TAB_AMBIGUOUS) cũng dùng breakdown_mode="camp" qua nút "Gộp tất cả thành 1 BBNT" mà không
+            cần chọn trước ở đây (xem runCombine) — vẫn cần nhập tên camp ngay khi backend báo thiếu. */}
+        {breakdownMode === "camp" && campSources && (
+          <fieldset>
+            <legend>Đặt tên camp</legend>
+            <p className="hint">Đặt tên camp riêng cho từng tab/link bên dưới (bắt buộc, không được trùng nhau).</p>
+            <div className="camp-names">
+              {campSources.map((s) => (
+                <label key={campKey(s.link_index, s.tab)}>
+                  {s.link_index === 0 ? "Link chính" : `Link phụ #${s.link_index}`} · tab {s.tab}
+                  <input
+                    value={campNames[campKey(s.link_index, s.tab)] ?? ""}
+                    onChange={(e) =>
+                      setCampNames((n) => ({ ...n, [campKey(s.link_index, s.tab)]: e.target.value }))
+                    }
+                    placeholder="VD: Camp Mix"
+                    maxLength={100}
+                  />
+                </label>
+              ))}
+            </div>
           </fieldset>
         )}
 
@@ -515,8 +570,8 @@ export default function BbntForm() {
                 maxLength={60}
               />
               <span className="hint">
-                Tự gõ, ráp thẳng vào số BBNT{suffix.trim() ? ` (vd ...-${previewSuffix(suffix)})` : ""}. Portal tự
-                chuẩn hoá: in hoa, đổi khoảng trắng/ký tự lạ thành gạch ngang. Link order mặc định tính TOÀN BỘ dòng
+                Tự gõ, ráp thẳng vào số BBNT{suffix.trim() ? ` (vd ...-${previewSuffix(suffix)})` : ""}. Portal GIỮ
+                NGUYÊN 100% như đã gõ — không in hoa, không đổi ký tự nào. Link order mặc định tính TOÀN BỘ dòng
                 đơn, không lọc theo tháng nữa.
               </span>
             </label>

@@ -105,30 +105,38 @@ def c14n(data: bytes) -> bytes:
     return etree.tostring(etree.fromstring(data), method="c14n")
 
 
-def strip_brand_section(d: docx.document.Document) -> docx.document.Document:
-    """Mô phỏng đúng những gì :meth:`BbntDocxRenderer._expand_brand_sections` làm khi ``brands=()``: xoá khối
-    mẫu ``{{brand_section_start}}``..``{{brand_section_end}}`` (nếu template có) khỏi ``d`` tại chỗ — để so
-    fingerprint công bằng giữa template gốc (còn khối mẫu) và output (brand=() -> khối bị xoá trắng)."""
-    body = d.element.body
+def _strip_markers(body, start_tag: str, end_tag: str, *, keep_middle: bool) -> None:
     start = end = None
     for child in body:
         if child.tag != W_P:
             continue
         text = paragraph_text(child).strip()
-        if start is None and text == "{{" + filler_mod.BRAND_START + "}}":
+        if start is None and text == "{{" + start_tag + "}}":
             start = child
-        elif start is not None and text == "{{" + filler_mod.BRAND_END + "}}":
+        elif start is not None and text == "{{" + end_tag + "}}":
             end = child
             break
     if start is None or end is None:
-        return d
-    protos = []
+        return
+    middle = []
     node = start.getnext()
     while node is not None and node is not end:
-        protos.append(node)
+        middle.append(node)
         node = node.getnext()
-    for el in (start, *protos, end):
+    to_remove = (start, end) if keep_middle else (start, *middle, end)
+    for el in to_remove:
         el.getparent().remove(el)
+
+
+def strip_brand_section(d: docx.document.Document) -> docx.document.Document:
+    """Mô phỏng đúng những gì :meth:`BbntDocxRenderer._expand_brand_sections` làm khi ``brands=()``: xoá khối
+    mẫu ``{{brand_section_start}}``..``{{brand_section_end}}`` (nếu template có) khỏi ``d`` tại chỗ — để so
+    fingerprint công bằng giữa template gốc (còn khối mẫu) và output (brand=() -> khối bị xoá trắng). Cũng
+    xoá 2 paragraph marker ``{{summary_section_start}}``/``{{summary_section_end}}`` (nếu có, GIỮ NGUYÊN nội
+    dung ở giữa) — đúng những gì ``show_summary=True`` (mặc định khi render) làm."""
+    body = d.element.body
+    _strip_markers(body, filler_mod.BRAND_START, filler_mod.BRAND_END, keep_middle=False)
+    _strip_markers(body, filler_mod.SUMMARY_START, filler_mod.SUMMARY_END, keep_middle=True)
     return d
 
 
@@ -443,3 +451,85 @@ def test_brand_sections_not_leaked_as_literal_text_without_brands():
     r = BbntDocxRenderer(_brand_section_doc())
     out = r.render({}, [], brands=())
     assert "{{brand" not in all_text(load(out.content))
+
+
+def test_brand_sections_insert_blank_paragraph_between_consecutive_blocks():
+    """Từ khối thứ 2 trở đi, 1 paragraph trống được chèn NGAY TRƯỚC khối đó để tách các bảng theo brand/camp
+    liên tiếp nhau — không chèn trước khối đầu tiên (đứng 1 mình vẫn y hệt trước khi có tính năng)."""
+    r = BbntDocxRenderer(_brand_section_doc())
+    brands = [BrandBlock({"index": "1", "name": "ANESSA", "gmv_estimated": "1"}, []),
+             BrandBlock({"index": "2", "name": "ELIXIR", "gmv_estimated": "2"}, [])]
+
+    out_one = r.render({}, [], brands=brands[:1], seed=1)
+    texts_one = [paragraph_text(p) for p in load(out_one.content).element.body.iter(W_P)]
+    assert texts_one.count("") == 0      # 1 khối đứng 1 mình -> không có paragraph trống chèn thêm
+
+    out_two = r.render({}, [], brands=brands, seed=1)
+    texts_two = [paragraph_text(p) for p in load(out_two.content).element.body.iter(W_P)]
+    idx_anessa = texts_two.index("1. ANESSA")
+    idx_elixir = texts_two.index("2. ELIXIR")
+    assert texts_two[idx_elixir - 1] == ""           # paragraph trống ngay trước khối thứ 2
+    assert idx_anessa < idx_elixir - 1
+
+
+# =========================================================================== summary section (ẩn bảng tổng hợp)
+def _summary_section_doc():
+    def build(d):
+        d.add_paragraph("Trước")
+        d.add_paragraph("{{brand_section_start}}")
+        d.add_paragraph("{{brand.index}}. {{brand.name}}")
+        t = d.add_table(rows=2, cols=2)
+        t.cell(0, 0).text, t.cell(0, 1).text = "{{item.name}}", "{{item.quantity}}"
+        d.add_paragraph("{{brand_section_end}}")
+        d.add_paragraph("{{summary_section_start}}")
+        d.add_paragraph("Bảng tổng hợp:")
+        t2 = d.add_table(rows=2, cols=2)
+        t2.cell(0, 0).text, t2.cell(0, 1).text = "{{item.name}}", "{{item.quantity}}"
+        d.add_paragraph("Tổng: {{total_quantity}}")
+        d.add_paragraph("{{summary_section_end}}")
+        d.add_paragraph("GMV chung: {{gmv_estimated}}")
+        d.add_paragraph("Sau")
+    return make_doc(build)
+
+
+def test_summary_section_scalars_not_leaked_into_spec_markers():
+    r = BbntDocxRenderer(_summary_section_doc())
+    assert r.spec.scalars == {"total_quantity", "gmv_estimated"}    # 2 marker paragraph không tính là scalar
+
+
+def test_summary_section_shown_by_default_unchanged_document():
+    """``show_summary`` mặc định ``True`` -> chỉ xoá 2 paragraph marker, GIỮ NGUYÊN nội dung ở giữa (tài liệu
+    không đổi so với trước khi có tính năng này)."""
+    r = BbntDocxRenderer(_summary_section_doc())
+    brands = [BrandBlock({"index": "1", "name": "ANESSA"}, [{"name": "A", "quantity": "1"}])]
+    out = r.render({"total_quantity": "9", "gmv_estimated": "100"},
+                   [{"name": "A", "quantity": "1"}], brands=brands, seed=1)
+    text = all_text(load(out.content))
+    assert "{{" not in text and "summary_section" not in text
+    assert "Bảng tổng hợp:" in text and "Tổng: 9" in text and "GMV chung: 100" in text
+
+
+def test_summary_section_hidden_when_show_summary_false():
+    """``show_summary=False`` -> xoá LUÔN toàn bộ bảng tổng hợp top-level (kể cả 2 marker) — chỉ còn bảng theo
+    từng brand/camp; phần sau khối (GMV chung) KHÔNG bị ảnh hưởng."""
+    r = BbntDocxRenderer(_summary_section_doc())
+    brands = [BrandBlock({"index": "1", "name": "JBEAUTY"}, [{"name": "A", "quantity": "1"}]),
+             BrandBlock({"index": "2", "name": "MIX"}, [{"name": "B", "quantity": "2"}])]
+    out = r.render({"total_quantity": "<unused>", "gmv_estimated": "100"},
+                   [{"name": "X", "quantity": "99"}], brands=brands, show_summary=False, seed=1)
+    text = all_text(load(out.content))
+    assert "{{" not in text and "summary_section" not in text
+    assert "Bảng tổng hợp:" not in text and "Tổng:" not in text        # bảng tổng hợp bị xoá hẳn
+    assert "1. JBEAUTY" in text and "2. MIX" in text                   # bảng riêng từng camp vẫn còn
+    assert "GMV chung: 100" in text and "Trước" in text and "Sau" in text    # nội dung ngoài khối giữ nguyên
+    tables = list(load(out.content).element.body.iter(W_TBL))
+    assert len(tables) == 2          # chỉ còn 2 bảng (JBEAUTY + MIX), bảng tổng hợp đã bị xoá
+
+
+def test_summary_section_absent_in_template_is_a_noop():
+    """Template không có marker ``{{summary_section_start}}``/``{{summary_section_end}}`` -> ``show_summary``
+    (dù True hay False) không ảnh hưởng gì, giống hệt trước khi có tính năng này."""
+    r = BbntDocxRenderer(_brand_section_doc())
+    out_true = r.render({}, [{"name": "TONG", "quantity": "6"}], brands=(), show_summary=True, seed=1)
+    out_false = r.render({}, [{"name": "TONG", "quantity": "6"}], brands=(), show_summary=False, seed=1)
+    assert out_true.content == out_false.content

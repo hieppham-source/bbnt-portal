@@ -13,8 +13,8 @@ Format::
 * ``ENTITY`` — ``EZ`` (EZS) | ``SS`` (SASSY).
 * ``CHANNEL``— ``FB`` | ``TTS``.
 * ``SUFFIX`` — "đuôi biên bản nghiệm thu" người làm TỰ GÕ (không suy ra từ kỳ nghiệm thu nữa — link order mặc
-  định tính TOÀN BỘ dòng đơn, không giới hạn theo tháng). Tự do gõ chữ/số/khoảng trắng, portal tự chuẩn hoá
-  (in hoa, gộp khoảng trắng/ký tự lạ liên tiếp thành 1 gạch ngang) qua :func:`normalize_suffix`.
+  định tính TOÀN BỘ dòng đơn, không giới hạn theo tháng). Portal GIỮ NGUYÊN 100% như đã gõ (chỉ bỏ khoảng
+  trắng thừa ở đầu/cuối) — không in hoa, không đổi ký tự nào, xem :func:`normalize_suffix`.
 
 Toàn bộ là hàm thuần (không DB, không I/O). Số BBNT tất định: cùng brand/pháp nhân/kênh/đuôi và cùng tháng lập
 -> cùng số, nên tạo lại BBNT (dán lại link order, gõ lại đúng đuôi cũ) cho ra đúng số cũ. Tool không lưu BBNT
@@ -33,8 +33,6 @@ VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 DOC_TOKEN = "BBNT"
 
-#: Đuôi biên bản nghiệm thu sau chuẩn hoá: A-Z, 0-9, gạch ngang đơn (không ở đầu/cuối).
-_SUFFIX_RE = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*$")
 SUFFIX_MAX_LEN = 60
 
 #: Mã pháp nhân hệ thống -> token ENTITY trong số BBNT (đồng bộ legal_entities.number_code).
@@ -59,15 +57,16 @@ class NumberingError(ValueError):
 # Đuôi biên bản nghiệm thu (suffix) — người làm tự gõ, thay cho kỳ nghiệm thu cũ
 # =============================================================================
 def normalize_suffix(raw: str) -> str:
-    """Chuẩn hoá "đuôi biên bản nghiệm thu" người dùng tự gõ trước khi ráp vào số BBNT: in hoa, gộp mọi
-    khoảng trắng/ký tự không phải chữ-số liên tiếp thành 1 gạch ngang, bỏ gạch ngang thừa ở đầu/cuối.
+    """GIỮ NGUYÊN 100% "đuôi biên bản nghiệm thu" người dùng tự gõ, ráp thẳng vào số BBNT — chỉ bỏ khoảng
+    trắng thừa ở đầu/cuối, KHÔNG in hoa, KHÔNG đổi/gộp bất kỳ ký tự nào (người làm tự chịu trách nhiệm gõ đúng
+    như muốn hiển thị trên biên bản).
 
-    >>> normalize_suffix("  bday dot 1 ")
-    'BDAY-DOT-1'
+    >>> normalize_suffix("  Bday 05 ")
+    'Bday 05'
     >>> normalize_suffix("Q3-CAMP")
     'Q3-CAMP'
     """
-    s = re.sub(r"[^A-Z0-9]+", "-", raw.strip().upper()).strip("-")
+    s = raw.strip()
     if not s:
         raise NumberingError("Đuôi biên bản nghiệm thu không được để trống")
     if len(s) > SUFFIX_MAX_LEN:
@@ -365,7 +364,7 @@ def generate_bbnt_number(
     >>> from datetime import timezone
     >>> str(generate_bbnt_number(brands=[BrandRef("ORGANICA")], entity="EZS", channel="FB",
     ...     suffix="BDAY 05", issued_at=datetime(2026, 5, 31, 17, 30, tzinfo=timezone.utc)))
-    '06.26/BBNT-ORGANICA-EZ-FB-BDAY-05'
+    '06.26/BBNT-ORGANICA-EZ-FB-BDAY 05'
     """
     moment_vn = to_vn_time(issued_at if issued_at is not None else clock())
     return BbntNumber(
@@ -381,15 +380,17 @@ def generate_bbnt_number(
 
 _NUMBER_RE = re.compile(
     rf"^(?P<issue>\d{{2}}\.\d{{2}})/{DOC_TOKEN}-(?P<scope>[A-Z0-9_]+)-(?P<entity>[A-Z]{{2,5}})"
-    rf"-(?P<channel>[A-Z0-9]+)-(?P<suffix>[A-Z0-9]+(?:-[A-Z0-9]+)*?)(?:-R(?P<rev>[1-9]\d*))?$"
+    rf"-(?P<channel>[A-Z0-9]+)-(?P<suffix>.+?)(?:-R(?P<rev>[1-9]\d*))?$"
 )
 
 
 def parse_bbnt_number(value: str) -> BbntNumber:
     """Đảo ngược ``str(BbntNumber)``. Dùng để validate số nhập tay / import dữ liệu cũ. KHÔNG dùng trong luồng
-    tạo BBNT (``BbntGenerator`` không gọi hàm này) — suffix tự gõ kết thúc bằng "-R{số}" (vd "ROUND-R1") có thể
-    bị hiểu nhầm thành hậu tố revision khi parse ngược; trường hợp hiếm này chấp nhận được vì chỉ ảnh hưởng tới
-    việc đọc lại 1 số đã có, không ảnh hưởng tới số được SINH ra."""
+    tạo BBNT (``BbntGenerator`` không gọi hàm này) — ``suffix`` giờ giữ nguyên 100% như người dùng tự gõ (xem
+    :func:`normalize_suffix`, có thể chứa bất kỳ ký tự nào kể cả khoảng trắng/chữ thường), nên phần suffix ở
+    đây nhận MỌI ký tự; suffix tự gõ kết thúc bằng "-R{số}" (vd "ROUND-R1") có thể bị hiểu nhầm thành hậu tố
+    revision khi parse ngược; trường hợp hiếm này chấp nhận được vì chỉ ảnh hưởng tới việc đọc lại 1 số đã có,
+    không ảnh hưởng tới số được SINH ra."""
     m = _NUMBER_RE.fullmatch(value.strip())
     if not m:
         raise NumberingError(f"Số BBNT sai định dạng: {value!r}")
