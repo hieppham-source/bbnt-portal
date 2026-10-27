@@ -1,6 +1,6 @@
 # Security
 
-- **Repo đang public** (kiểm 27/10/2026). Không tạo workflow chạy worker có credential, không commit dữ liệu brand cho tới khi repo chuyển private (OPEN_QUESTIONS Q6).
+- Repo đã chuyển **private** (xác nhận 27/10/2026: clone ẩn danh bị từ chối). Vẫn không commit dữ liệu brand / secret.
 - Không commit secret; secret chỉ ở GitHub Secrets / Render env / Cloudflare secrets. Không in token ra log.
 - CI chỉ có `contents: read`, không có secret production; workflow deploy và workflow worker tách riêng, chỉ chạy trên `main`/lịch, không chạy cho PR từ fork.
 - OAuth scope worker: `spreadsheets`, `drive.readonly`, `drive.file`, `gmail.send`, `gmail.readonly` — không thêm scope khác.

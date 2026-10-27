@@ -24,3 +24,4 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 ## Lịch sử
 
 - 27/10/2026 — commit local `feat/reconciliation-core` (xem `git log`). Test: 539 passed, 1 skipped (kèm migration test với `RECON_TEST_DATABASE_URL`). Chưa có PR: GitHub API trả 403 `Resource not accessible by integration` khi tạo branch.
+- 27/10/2026 — repo đã private. Push vẫn **BLOCKED**: git proxy báo repo không thuộc tập repo được cấp cho phiên; GitHub MCP trả 404 cho repo.
