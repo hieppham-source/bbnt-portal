@@ -31,8 +31,10 @@ def test_signed_contracts_match_brand_or_group_entity_channel_and_status():
         ContractRow("", "AESTURA", "EZS", "FB", "Đã ký"),
     ]
     assert signed_contracts(rows, brand_codes=["AESTURA"], group_code=None, entity="EZS") == ["01/HĐ-A"]
+    # AESTURA có HĐ riêng, INNISFREE lấy HĐ group -> 2 hợp đồng -> Audit chặn
     assert signed_contracts(rows, brand_codes=["AESTURA", "INNISFREE"], group_code="AMORE",
-                            entity="ezs") == ["01/HĐ-A", "02/HĐ-GRP"]          # 2 hợp đồng -> Audit chặn
+                            entity="ezs") == ["01/HĐ-A", "02/HĐ-GRP"]
+    assert signed_contracts(rows, brand_codes=["AESTURA"], group_code="AMORE", entity="EZS") == ["01/HĐ-A"]
 
 
 def test_build_input_single_brand_and_group():

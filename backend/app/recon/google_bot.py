@@ -11,6 +11,7 @@ Biến môi trường (GitHub Secrets / Variables, không bao giờ in ra log):
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -97,8 +98,12 @@ def parse_contracts(values: Sequence[Sequence[Any]]) -> list[ContractRow]:
             continue
         entity = entity_code(_text(_get(row, pn))) or _text(_get(row, pn))
         status = _text(_get(row, col["status"]))
-        for owner in {_text(_get(row, col["brand"])), _text(_get(row, col.get("group brand")))} - {""}:
-            out.append(ContractRow(no, owner, entity, "FB", status))
+        brands = re.split(r"[\r\n,]+", str(_get(row, col["brand"]) or ""))   # 1 ô có thể ghi nhiều brand
+        for b in {_text(x) for x in brands} - {""}:
+            out.append(ContractRow(no, b, entity, "FB", status))
+        group = _text(_get(row, col.get("group brand")))
+        if group:
+            out.append(ContractRow(no, group, entity, "FB", status, level="group"))
     return out
 
 

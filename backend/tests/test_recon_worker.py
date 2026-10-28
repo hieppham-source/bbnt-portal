@@ -286,5 +286,5 @@ def test_scope_starts_august_2026(run):
                 scope_from=SCOPE_FROM)
     by = {p.rows[0]: (p.action, p.reasons) for p in plans}
     assert by[7] == (Action.SKIP, ["BEFORE_SCOPE"])                   # BDAY - 05/2026: nghiệm thu tay
-    assert by[8] == (Action.REVIEW, ["CAMPAIGN_MONTH_UNKNOWN"])       # không có tháng, G trống
+    assert by[8] == (Action.SKIP, ["BEFORE_SCOPE"])                   # không có tháng, G trống
     assert by[9][1] != ["BEFORE_SCOPE"]                               # không có tháng nhưng G = 30/09 -> trong phạm vi

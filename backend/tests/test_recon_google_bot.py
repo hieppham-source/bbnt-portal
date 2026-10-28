@@ -87,8 +87,8 @@ DATA_CONTRACT = [
 def test_parse_contracts_rows_for_brand_and_group():
     got = parse_contracts(DATA_CONTRACT)
     assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO", "SASSY", "FB", "Đã ký") in got
-    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO_GRP", "SASSY", "FB", "Đã ký") in got
-    assert ContractRow("00/2025/OLD", "ORGANICA", "EZS", "FB", "Hết hạn") in got and len(got) == 3
+    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO_GRP", "SASSY", "FB", "Đã ký", "group") in got
+    assert ContractRow("00/2025/OLD", "ORGANICA", "EZS", "FB", "Hết hạn") in got and len(got) == 4
 
 
 def test_parse_contracts_missing_header():
@@ -177,3 +177,22 @@ def test_live_without_env_fails_fast(monkeypatch, capsys):
         monkeypatch.delenv(k, raising=False)
     assert worker.main(["dry-run", "--live", "--summary"]) == 1
     assert "Thiếu biến môi trường" in capsys.readouterr().err
+
+
+def test_contract_brand_match_wins_over_group_and_multi_brand_cells():
+    from app.recon.bbnt_job import signed_contracts
+    rows = parse_contracts([
+        ["GROUP BRAND", "BRAND", "Email", "STATUS", "SỐ HỢP ĐỒNG", "PHÁP NHÂN B\n(EZ/SS)"],
+        ["WELLHOME", "TEFAL", "", "Đã ký", "01082025/TEFAL-EZS-FB", "EZS"],
+        ["WELLHOME", "BOSCH", "", "Đã ký", "28112025/BOSCH-EZS-FB", "EZS"],
+        ["BRANDPARTNER", "BERGHOFF\r\nNACHTMANN\r\nFISSLER ", "", "Đã ký", "012026/BRANDPARTNER-EZS-FB", "EZS"],
+        ["DKSH", "URIGAE", "", "Đã ký", "01082024/DKSH-EZ-FB", "EZS"],
+        ["DKSH", "AVENE"],                                          # dòng thiếu số HĐ -> dùng HĐ theo group
+        ["LDB", "CERAVE", "", "Chưa ký"],
+    ])
+    find = lambda brands, group=None: signed_contracts(rows, brand_codes=brands, group_code=group, entity="EZS")  # noqa: E731
+    assert find(["TEFAL"], "WELLHOME") == ["01082025/TEFAL-EZS-FB"]
+    assert find(["NACHTMANN"], "BRANDPARTNER") == ["012026/BRANDPARTNER-EZS-FB"]
+    assert find(["AVENE"], "DKSH") == ["01082024/DKSH-EZ-FB"]
+    assert find(["CERAVE"], "LDB") == []
+    assert find(["TEFAL", "BOSCH"], "WELLHOME") == ["01082025/TEFAL-EZS-FB", "28112025/BOSCH-EZS-FB"]

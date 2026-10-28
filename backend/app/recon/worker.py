@@ -160,10 +160,9 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
         if month is not None and month < scope_from:     # trước 08/2026: nghiệm thu tay, bot bỏ qua
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
                                   ["BEFORE_SCOPE"]))
-        elif month is None:                              # không biết tháng (tên lạ + G trống) -> duyệt
-            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
-                                  ["CAMPAIGN_MONTH_UNKNOWN"],
-                                  hints=["Tên campaign không có 'MM/YYYY' và cột G trống"]))
+        elif month is None:      # tên không có tháng + G trống: G chỉ nhập từ 08/2026 -> coi là trước phạm vi
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
+                                  ["BEFORE_SCOPE"], hints=["Tên campaign không có 'MM/YYYY' và cột G trống"]))
         elif h == "op":                               # phạm vi bot: chỉ cột H = "NON OP"
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
                                   ["NOT_FB_NON_OP"]))
