@@ -35,11 +35,13 @@ SHISEIDO = {"channel": "FB", "entity": "SASSY", "group_code": "SHISEIDO_GRP", "b
 
 
 class Env:
-    def __init__(self, tables: dict[str, list[list[Any]]], sheets: FakeSheets) -> None:
+    # allow_merged=True: test cũ vẫn kiểm code gộp/tách còn giữ sau cờ (xoá ở bước 2, ARCHITECTURE 13.2)
+    def __init__(self, tables: dict[str, list[list[Any]]], sheets: FakeSheets, allow_merged: bool = True) -> None:
         self.tables, self.sheets = tables, sheets
         self.clock = vn_clock(2026, 6, 3)
         self.master_reads = 0
-        settings = Settings.from_env({"MASTER_FILE": str(MASTER_XLSX), "DEV_AUTH_HEADER": "true"})
+        settings = Settings.from_env({"MASTER_FILE": str(MASTER_XLSX), "DEV_AUTH_HEADER": "true",
+                                      "ALLOW_MERGED_BBNT": str(allow_merged).lower()})
         self.app = create_app(settings)
 
         def source() -> Any:
@@ -380,3 +382,33 @@ def test_order_without_brand_column_keeps_all_lines(env):
     assert r.status_code == 200, r.text
     b = r.json()
     assert b["other_brand_line_count"] == 0 and Decimal(str(b["figures"]["nmv"])) == 1_000_000
+
+
+# =========================================================================== ALLOW_MERGED_BBNT=false (mặc định)
+@pytest.fixture
+def locked(master_tables, fake_sheets) -> Env:
+    return Env(master_tables, fake_sheets, allow_merged=False)
+
+
+def test_settings_default_locks_merged_bbnt():
+    assert Settings.from_env({"MASTER_FILE": str(MASTER_XLSX)}).allow_merged_bbnt is False
+
+
+@pytest.mark.parametrize("path, extra", [
+    ("/api/v1/bbnt/preview", {"extra_order_sheet_urls": [SECOND_ORDER_URL]}),
+    ("/api/v1/bbnt/generate", {"extra_order_sheet_urls": [SECOND_ORDER_URL]}),
+    ("/api/v1/bbnt/preview", {"breakdown_mode": "camp",
+                              "camp_names": [{"link_index": 0, "tab": "ORDER", "name": "A"}]}),
+    ("/api/v1/bbnt/preview-split", {"tab_mode": "split", "tab_campaign_names": {"ORDER": "A"}}),
+    ("/api/v1/bbnt/preview-split", {}),
+])
+def test_locked_rejects_merge_features(locked, path, extra):
+    r = locked.post(path, {**ORGANICA, **extra})
+    assert r.status_code == 422
+    assert r.json()["code"] == "MERGED_BBNT_DISABLED"
+
+
+def test_locked_keeps_single_link_and_group(locked):
+    assert locked.post("/api/v1/bbnt/preview", ORGANICA).status_code == 200
+    r = locked.post("/api/v1/bbnt/preview", {**SHISEIDO, "breakdown_mode": "brand"})
+    assert r.status_code == 200, r.json()

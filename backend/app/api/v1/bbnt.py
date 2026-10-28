@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
 from app.api.deps import MasterLoader, User, get_generator, get_master_loader, get_sheet_reader, get_user
+from app.config import Settings, get_settings
 from app.core.calculation import RowIssue
 from app.docx.vn_text import amount_in_words
 from app.errors import fail
@@ -71,6 +72,25 @@ def order_opener(sheets: SheetReader, urls: list[str]) -> OrderOpener:
     def open_() -> list[OrderWorkbook]:
         return [sheets.open(ref) for ref in refs]
     return open_
+
+
+def reject_merged(payload: BbntRequest, settings: Settings, split: bool = False) -> None:
+    """``ALLOW_MERGED_BBNT=false``: 1 link order = 1 BBNT — chặn gộp nhiều link, tách camp, tách tab
+    (ARCHITECTURE 14.1). Nhiều brand/group + tách theo brand vẫn giữ."""
+    if settings.allow_merged_bbnt:
+        return
+    used = [name for name, on in (
+        ("extra_order_sheet_urls", bool(payload.extra_order_sheet_urls)),
+        ("breakdown_mode='camp'", payload.breakdown_mode == "camp"),
+        ("camp_names", bool(payload.camp_names)),
+        ("tab_mode='split' / preview-split", split or payload.tab_mode == "split"),
+        ("tab_campaign_names", bool(payload.tab_campaign_names)),
+    ) if on]
+    if used:
+        raise fail("MERGED_BBNT_DISABLED",
+                   "Quy tắc mới: 1 link order = 1 BBNT. Không còn gộp nhiều link, tách camp hay tách tab "
+                   "(" + ", ".join(used) + "). Link có nhiều tab mơ hồ: chọn 1 tab.",
+                   details={"fields": used})
 
 
 def _run(payload: BbntRequest, load_master: MasterLoader, sheets: SheetReader, gen: BbntGenerator,
@@ -146,20 +166,23 @@ UserDep = Annotated[User, Depends(get_user)]
 MasterDep = Annotated[MasterLoader, Depends(get_master_loader)]
 SheetsDep = Annotated[SheetReader, Depends(get_sheet_reader)]
 GenDep = Annotated[BbntGenerator, Depends(get_generator)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 RefreshQ = Annotated[bool, Query(description="Đọc lại Sheet master ngay, bỏ qua cache")]
 
 
 @router.post("/preview", response_model=PreviewResponse, responses=_ERRORS,
              summary="Xem trước số BBNT + số liệu (không tạo file)")
 def preview_bbnt(payload: BbntRequest, user: UserDep, load_master: MasterDep, sheets: SheetsDep, gen: GenDep,
-                 refresh: RefreshQ = False) -> PreviewResponse:
+                 settings: SettingsDep, refresh: RefreshQ = False) -> PreviewResponse:
+    reject_merged(payload, settings)
     return to_preview(_run(payload, load_master, sheets, gen, render=False, refresh=refresh))
 
 
 @router.post("/preview-split", response_model=SplitPreviewResponse, responses=_ERRORS,
              summary="Xem trước TÁCH BBNT theo từng tab/camp (tab_mode='split')")
 def preview_bbnt_split(payload: BbntRequest, user: UserDep, load_master: MasterDep, sheets: SheetsDep,
-                       gen: GenDep, refresh: RefreshQ = False) -> SplitPreviewResponse:
+                       gen: GenDep, settings: SettingsDep, refresh: RefreshQ = False) -> SplitPreviewResponse:
+    reject_merged(payload, settings, split=True)
     return SplitPreviewResponse(results=[to_preview(r) for r in _run_split(payload, load_master, sheets, gen,
                                                                            refresh)])
 
@@ -167,7 +190,8 @@ def preview_bbnt_split(payload: BbntRequest, user: UserDep, load_master: MasterD
 @router.post("/generate", responses={200: {"content": {DOCX_MIME: {}}}, **_ERRORS},
              response_class=Response, summary="Tạo & tải file BBNT .docx (server không lưu)")
 def generate_bbnt(payload: BbntRequest, user: UserDep, load_master: MasterDep, sheets: SheetsDep, gen: GenDep,
-                  refresh: RefreshQ = False) -> Response:
+                  settings: SettingsDep, refresh: RefreshQ = False) -> Response:
+    reject_merged(payload, settings)
     r = _run(payload, load_master, sheets, gen, render=True, refresh=refresh)
     assert r.content is not None
     number = str(r.number)

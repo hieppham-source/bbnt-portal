@@ -42,6 +42,8 @@ class Settings:
     master_cache_seconds: int = 60
     templates_dir: str = DEFAULT_TEMPLATES_DIR
     timezone: str = "Asia/Ho_Chi_Minh"
+    # Bật lại gộp nhiều link / tách camp / tách tab (ARCHITECTURE 14.1). Mặc định tắt: 1 link order = 1 BBNT.
+    allow_merged_bbnt: bool = False
 
     @property
     def is_production(self) -> bool:
@@ -67,6 +69,7 @@ class Settings:
             master_cache_seconds=cache,
             templates_dir=e.get("TEMPLATES_DIR") or DEFAULT_TEMPLATES_DIR,
             timezone=e.get("APP_TIMEZONE", "Asia/Ho_Chi_Minh"),
+            allow_merged_bbnt=e.get("ALLOW_MERGED_BBNT", "false").lower() in ("1", "true", "yes"),
         )
         s.validate()
         return s
