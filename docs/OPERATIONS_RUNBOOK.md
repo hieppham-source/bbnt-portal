@@ -10,6 +10,7 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 ## Migration
 - Trước khi chạy: backup (`pg_dump "$DATABASE_URL" > backup.sql`, Neon cũng có point-in-time restore).
 - Up lỗi giữa chừng: file chạy trong 1 transaction → không để lại bảng dở (có test).
+- Rollback 0002 (chạy trước 0001): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0002_recon_idempotency.down.sql` — mất nhật ký `sheet_write`, giữ case.
 - Rollback 0001: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.down.sql` — **xoá toàn bộ dữ liệu workflow**, chỉ làm sau khi backup.
 
 ## Token Google bị thu hồi

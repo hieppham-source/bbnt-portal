@@ -37,7 +37,7 @@ Không có chức năng recon nào đang **chạy** ở production: chưa có `D
 | Hợp đồng | Đúng 1 dòng `Đã ký` + FB + pháp nhân + có trong master portal | — | — |
 | Số BBNT | Ổn định khi truyền `issued_at` đã lưu; `bbnt_number` UNIQUE | Lưu `issued_at` (cần DB thật) | `DATABASE_URL` |
 | Không phát hành khi lỗi | Mọi lý do → REVIEW; dry-run không ghi | Audit Gate email (template, loopmail…) chưa nối vào worker | Q1, token |
-| Case ổn định, idempotency, audit | Schema + repository có; dry-run chưa dùng DB | Nối worker ↔ DB | `RECON_STATE_PROPOSAL.md` cần duyệt |
+| Case ổn định, idempotency, audit | Schema + repository có; dry-run chưa dùng DB | Nối worker ↔ DB | Đã duyệt + migration 0002; còn chờ token để chạy thật |
 | Credential nền | Thiết kế: refresh token hộp thư gửi trong GitHub Secrets | Code client + secret | Token |
 | Dry-run trước khi ghi | Có, đã test | Chạy trên bản sao FB.JT thật | Token |
 | Không lộ secret/dữ liệu | Fixture giả lập (`MẪU`), CI không có secret | — | — |

@@ -35,4 +35,4 @@ Rollback: tắt workflow lịch + đặt cả hai cờ `off` (xem `OPERATIONS_RU
 
 ## Migration
 
-Áp dụng tay (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`. Rollback: xem `OPERATIONS_RUNBOOK.md`.
+Áp dụng tay theo thứ tự (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`, rồi `0002_recon_idempotency.up.sql`. CI job `migrations` chạy cả hai. Rollback: xem `OPERATIONS_RUNBOOK.md`.

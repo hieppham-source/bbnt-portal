@@ -1,7 +1,7 @@
-# Đề xuất: trạng thái bền vững + idempotency cho worker (CHỜ DUYỆT)
+# Trạng thái bền vững + idempotency cho worker (ĐÃ DUYỆT 28/10/2026)
 
-Trạng thái: **đề xuất**. Chưa có migration mới, chưa nối worker với DB, chưa có thao tác ghi thật nào. Dựa trên
-schema đã merge `backend/migrations/0001_recon_init.up.sql` và `app/recon/db.py`.
+Trạng thái: **đã duyệt** (anh Hiệp, 28/10/2026 — Q13). Migration `0002_recon_idempotency` đã viết + test (PR #5).
+Worker **chưa** nối với DB, chưa có thao tác ghi thật nào (chờ token). Nền: `0001_recon_init` và `app/recon/db.py`.
 
 ## 1. Định danh
 
@@ -25,7 +25,7 @@ Không dùng số dòng Sheet hay chuỗi URL làm khoá.
 | REVIEW (case) | Có | `NEEDS_REVIEW` + `review_reasons` | |
 | DRAFT | Có | `BBNT_DRAFTED` | Lần đầu: lưu `bbnt_number`, `bbnt_issued_at`, `contract_no`, `figures` trong **cùng transaction** với transition |
 
-## 3. Bổ sung đề xuất (migration `0002`, chưa viết)
+## 3. Migration `0002_recon_idempotency` (đã viết: `backend/migrations/0002_*`)
 
 ```sql
 ALTER TABLE recon_case ADD COLUMN review_reasons text[] NOT NULL DEFAULT '{}';
@@ -58,8 +58,10 @@ CREATE TABLE sheet_write (                                      -- ý định gh
 
 `RECON_SHEET_WRITE=off`, `RECON_SEND_MODE=off`. Worker từ chối chạy `run-once` khi thiếu `DATABASE_URL` hoặc token bot; `dry-run` không cần cả hai.
 
-## 6. Cần anh duyệt
+## 6. Quyết định (28/10/2026)
 
-1. Bảng ánh xạ mục 2 (đặc biệt: SKIP không tạo case).
-2. Migration 0002 (mục 3).
-3. Quy tắc 4.3: số liệu đổi sau khi đã lập BBNT → luôn REVIEW, không tự sửa.
+1. Đồng ý mục 2: dòng FB.JT không tìm thấy link order chỉ báo KAM, không mở case.
+2. Đồng ý mục 3 (DB của bot). Ngoài DB: bot **được thêm cột** vào file link tổng `[NEW] Các order link gửi brand`
+   (tab `NON OP {YY}`); **FB.JT vẫn không được thêm cột** (chỉ ghi 3 ô I/K/M theo 12.1). Chưa có code ghi file link tổng —
+   cột cụ thể sẽ đề xuất khi làm bước Google bot.
+3. Đồng ý 4.3: số liệu đổi sau khi đã lập BBNT → luôn chờ KAM duyệt, không tự lập bản sửa.
