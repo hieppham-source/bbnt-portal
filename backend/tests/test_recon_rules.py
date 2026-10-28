@@ -18,6 +18,7 @@ from app.recon.rules import (
     CellAction,
     acceptance_send_date,
     allocate_total,
+    campaign_program_name,
     campaign_suffix,
     confirm_deadline,
     invoices_total,
@@ -54,6 +55,16 @@ def test_campaign_suffix(campaign: str, suffix: str) -> None:
 def test_campaign_suffix_rejects(bad: str) -> None:
     with pytest.raises(ValueError):
         campaign_suffix(bad)
+    with pytest.raises(ValueError):
+        campaign_program_name(bad)
+
+
+@pytest.mark.parametrize("campaign, name", [
+    ("MIX - 07/2026", "MIX 0726"), ("KBEAUTY - 07/2026", "KBEAUTY 0726"), ("Mix Derma - 7/2026", "MIX DERMA 0726"),
+    ("J BEAUTY - 12/2026", "J BEAUTY 1226"),
+])
+def test_campaign_program_name(campaign: str, name: str) -> None:
+    assert campaign_program_name(campaign) == name
 
 
 # --- hoá đơn ---------------------------------------------------------------------------------------------
