@@ -37,6 +37,9 @@ const SHEET_RE =
 // Tổng số link order tối đa (link chính + link phụ) — khớp max_length backend (xem BbntRequest.extra_order_sheet_urls).
 const MAX_ORDER_LINKS = 10
 
+// Tắt mặc định: 1 link order = 1 BBNT (không gộp link, không tách camp/tab). Khớp ALLOW_MERGED_BBNT ở backend.
+const ALLOW_MERGED = process.env.NEXT_PUBLIC_ALLOW_MERGED_BBNT === "true"
+
 export default function BbntForm() {
   const token = useIdToken()
 
@@ -491,13 +494,15 @@ export default function BbntForm() {
                   Theo brand
                 </button>
               )}
-              <button
-                className={breakdownMode === "camp" ? "on" : ""}
-                type="button"
-                onClick={() => pickBreakdownMode("camp")}
-              >
-                Theo camp
-              </button>
+              {ALLOW_MERGED && (
+                <button
+                  className={breakdownMode === "camp" ? "on" : ""}
+                  type="button"
+                  onClick={() => pickBreakdownMode("camp")}
+                >
+                  Theo camp
+                </button>
+              )}
             </div>
             {breakdownMode === "camp" && campSources === null && (
               <p className="hint">Bấm "Xem trước" để portal liệt kê các tab/link cần đặt tên camp.</p>
@@ -602,7 +607,7 @@ export default function BbntForm() {
           </span>
         </label>
 
-        {extraOrderUrls.map((u, i) => (
+        {ALLOW_MERGED && extraOrderUrls.map((u, i) => (
           <label key={i}>
             Link order #{i + 2}
             <div className="row tight">
@@ -618,7 +623,7 @@ export default function BbntForm() {
           </label>
         ))}
 
-        {extraOrderUrls.length < MAX_ORDER_LINKS - 1 ? (
+        {!ALLOW_MERGED ? null : extraOrderUrls.length < MAX_ORDER_LINKS - 1 ? (
           <button type="button" className="link" onClick={addOrderLink}>
             + Thêm link order{extraOrderUrls.length > 0 ? " nữa" : " (nếu dữ liệu nằm rải trên nhiều file)"}
           </button>
@@ -1114,7 +1119,7 @@ function ErrorBox({
               </li>
             ))}
           </ul>
-          {ambiguous && (
+          {ambiguous && ALLOW_MERGED && (
             <p className="actions">
               <button type="button" onClick={onCombine}>
                 Gộp tất cả thành 1 BBNT
