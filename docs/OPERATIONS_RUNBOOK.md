@@ -14,3 +14,8 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 
 ## Token Google bị thu hồi
 Đổi mật khẩu hộp thư gửi làm token mất hiệu lực → worker báo lỗi quyền, không gửi gì. Lấy lại refresh token và cập nhật GitHub Secret.
+
+## Rollback code
+- Backend (Render): revert PR trên `main` → CI xanh → Render tự deploy; hoặc Render → Deploys → Rollback.
+- Frontend (Cloudflare): trong worktree deploy `git checkout --detach <commit trước>` rồi `.\deploy.cmd`; hoặc `npx wrangler rollback`.
+- Worker: chưa chạy production. Khi có: tắt workflow lịch trước, rồi mới revert code/migration.

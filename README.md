@@ -1,5 +1,6 @@
 BBNT Generator — Hannah Olala
-Tạo Biên bản nghiệm thu (BBNT) từ file order. Không database, không lưu BBNT:
+Tạo Biên bản nghiệm thu (BBNT) từ file order. Portal không database, không lưu BBNT (module đối soát tự động
+`backend/app/recon/` dùng Postgres riêng — xem `docs/GAP_ANALYSIS.md`):
 thông tin hợp đồng nằm ở Google Sheet master, người làm dán link order → tải file .docx.
 ```
 bbnt-portal/
@@ -18,6 +19,10 @@ APP_ENV=development DEV_AUTH_HEADER=true MASTER_FILE=deploy/MASTER_BBNT_TEMPLATE
   CORS_ALLOWED_ORIGINS=http://localhost:3000 \
   uvicorn app.main:create_app --factory --port 8000
 pytest -q                       # toàn bộ test
+
+# Worker đối soát — chỉ lập kế hoạch, không ghi gì (fixture giả lập)
+python -m app.recon.worker dry-run --fixture tests/fixtures/recon_dry_run.json \
+  --master-file deploy/MASTER_BBNT_TEMPLATE.xlsx --today 2026-10-28
 
 # Tạo 1 BBNT từ dòng lệnh, dùng file order .xlsx
 python -m app.cli generate --master-file deploy/MASTER_BBNT_TEMPLATE.xlsx --order-file order.xlsx \

@@ -18,7 +18,7 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 | P4 BBNT adapter | IN_PROGRESS | PR #4 merged; `app/recon/bbnt_job.py`: dựng input từ case, lọc hợp đồng Đã ký, số BBNT cố định theo `bbnt_issued_at`, lỗi generator -> `reasons`. Còn: đọc DATA BRAND/CONTRACT thật, upload Drive (cần token) |
 | P4 Portal bỏ gộp nhiều link / tách camp (cờ `ALLOW_MERGED_BBNT`) | DEPLOYED | Bước 1 (khoá): API 422 `MERGED_BBNT_DISABLED`; form ẩn link phụ, "Theo camp", nút gộp/tách tab. Bước 2 (xoá code) sau 1–2 tháng |
 | P5 Gmail connector | NOT_STARTED | Cần token (BLOCKED để test thật) |
-| P7 Worker | IN_PROGRESS | Dry-run `app/recon/worker.py` (6 test). Còn `run-once` khi có token |
+| P7 Worker | IN_PROGRESS | Dry-run `app/recon/worker.py` (PR #5, chưa merge): 23 test + fixture giả lập SKIP/WAIT/REVIEW/DRAFT. Còn `run-once`: chờ duyệt `RECON_STATE_PROPOSAL.md` + token |
 | P8 API `/api/v1/recon/*` + dashboard `/reconcile` | NOT_STARTED | |
 | CI/CD frontend (Cloudflare) | NOT_STARTED | Cần `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` trong GitHub Secrets |
 
@@ -30,3 +30,4 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 - 28/10/2026 — PR #2 merged + deploy frontend. Branch `feat/recon-db`: kho trạng thái Postgres. pytest 551 passed khi có Postgres (541 + 11 skipped khi không).
 - 28/10/2026 — PR #3 merged. Branch `feat/recon-bbnt-adapter`: adapter BBNT cho bot.
 - 28/10/2026 — PR #4 merged. Branch `feat/recon-worker-dry-run`: worker dry-run.
+- 28/10/2026 — PR #5 thêm commit hardening + `GAP_ANALYSIS.md`, `RECON_STATE_PROPOSAL.md`. pytest 584 passed, 1 skipped (có Postgres 16 local); ruff, mypy strict OK.

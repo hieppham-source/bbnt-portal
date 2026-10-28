@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,7 @@ from app.recon.rules import CellAction
 from app.recon.worker import Action, OrderLink, plan_cases
 from app.services.templates import TemplateRegistry
 
-from .conftest import MASTER_XLSX, ORDER_URL_FB, ORDER_URL_SHISEIDO, ORGANICA_MAY, SHISEIDO_Q3
+from .conftest import MASTER_XLSX, ORDER_URL_FB, ORDER_URL_SHISEIDO, ORGANICA_MAY, SHISEIDO_Q3, order_rows
 from .test_recon_rules import HEADER
 
 TODAY = date(2026, 10, 28)
@@ -41,9 +42,10 @@ def run(master_tables):
     master = MasterRepository(lambda: master_tables, ttl_seconds=60).get()
     templates = TemplateRegistry(DEFAULT_TEMPLATES_DIR)
 
-    def go(*rows, contracts=CONTRACTS, today=TODAY):
-        return plan_cases(sheet(*rows), LINKS, contracts, master, templates, worker._fixture_opener(ORDERS),
-                          today=today, now=NOW)
+    def go(*rows, contracts=CONTRACTS, today=TODAY, links=LINKS, orders=ORDERS, now=NOW, issued_at=None,
+           master_=master):
+        return plan_cases(sheet(*rows), links, contracts, master_, templates, worker._fixture_opener(orders),
+                          today=today, now=now, issued_at=issued_at)
     return go
 
 
@@ -107,3 +109,132 @@ def test_cli_dry_run_prints_plan(tmp_path, capsys):
                         "--today", "2026-10-28"]) == 0
     out = capsys.readouterr().out
     assert "[DRAFT] dòng 7 · ORGANICA · BDAY - 05/2026" in out and "commission:" in out
+
+
+# ------------------------------------------------------------------ case biên (plan bước 8, yêu cầu 28/10/2026)
+ORG = ("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS")
+ORG_ID = "1OrderFbAbCdEfGhIjKlMnOpQr"
+
+
+def test_same_sheet_different_url_forms_is_one_case(run):
+    links = [*LINKS, OrderLink("ORGANICA", "BDAY - 05/2026", f"https://docs.google.com/spreadsheets/d/{ORG_ID}"
+                                                             "/edit?usp=sharing")]
+    [p] = run(row(*ORG), links=links)
+    assert p.action is Action.DRAFT and p.order_sheet_id == ORG_ID
+
+
+def test_two_sheets_for_same_key_is_ambiguous(run):
+    other = "https://docs.google.com/spreadsheets/d/1AnotherOrderSheetXyzAbCdEf/edit"
+    [p] = run(row(*ORG), links=[*LINKS, OrderLink("Organica", "BDAY - 05/2026", other)])
+    assert (p.action, p.reasons, p.order_sheet_id) == (Action.SKIP, ["LINK_AMBIGUOUS"], None)
+
+
+def test_missing_and_invalid_link_skip(run):
+    [p] = run(row(*ORG), links=[OrderLink("ORGANICA", "BDAY - 05/2026", "chưa có link")])
+    assert (p.action, p.reasons) == (Action.SKIP, ["LINK_INVALID"])
+    [p] = run(row(*ORG), links=[])
+    assert (p.action, p.reasons) == (Action.SKIP, ["LINK_NOT_FOUND"])
+
+
+def test_duplicate_fbjt_rows_and_invalid_row_go_to_review(run):
+    plans = run(row(*ORG), row(*ORG), row("SHISEIDO", "Q3 - 09/2026", "30/09/2026", "SASSY", nmv="abc"))
+    assert sorted((p.rows[0], p.action, tuple(p.reasons)) for p in plans) == [
+        (7, Action.REVIEW, ("FBJT_ROW_DUPLICATE",)), (8, Action.REVIEW, ("FBJT_ROW_DUPLICATE",)),
+        (9, Action.REVIEW, ("FBJT_ROW_INVALID",))]
+
+
+def test_one_link_mixed_campaign_or_entity_goes_to_review(run):
+    links = [*LINKS, OrderLink("ORGANICA", "MIX - 05/2026", ORDER_URL_FB)]
+    [p] = run(row(*ORG), row("ORGANICA", "MIX - 05/2026", "31/05/2026", "EZS"), links=links)
+    assert p.action is Action.REVIEW and p.reasons == ["CAMPAIGN_MISMATCH"]
+    [p] = run(row("SHISEIDO", "Q3 - 09/2026", "30/09/2026", "SASSY", group="SHISEIDO_GRP"),
+              row("ANESSA", "Q3 - 09/2026", "30/09/2026", "EZS", group="SHISEIDO_GRP"))
+    assert p.action is Action.REVIEW and p.reasons == ["ENTITY_MISMATCH"]
+
+
+def test_group_link_missing_a_brand_row_goes_to_review(run):
+    """Link group 2 brand nhưng FB.JT chỉ còn 1 dòng (dòng kia Done/thiếu) -> không chia số được."""
+    [p] = run(row("SHISEIDO", "Q3 - 09/2026", "30/09/2026", "SASSY", group="SHISEIDO_GRP"))
+    assert p.action is Action.REVIEW
+
+
+@pytest.mark.parametrize("contracts, reason", [
+    ([*CONTRACTS, ContractRow("02/2026/HĐDV/EZS-ORGANICA", "ORGANICA", "EZS", "FB", "Đã ký")], "CONTRACT_NOT_UNIQUE"),
+    ([ContractRow("01/2026/HĐDV/EZS-ORGANICA", "ORGANICA", "EZS", "FB", "Chờ ký")], "CONTRACT_NOT_UNIQUE"),
+    ([ContractRow("01/2026/HĐDV/EZS-ORGANICA", "ORGANICA", "EZS", "TTS", "Đã ký")], "CONTRACT_NOT_UNIQUE"),
+    ([ContractRow("99/2026/KHONG-CO-TRONG-MASTER", "ORGANICA", "EZS", "FB", "Đã ký")], "CONTRACT_NOT_FOUND"),
+])
+def test_contract_must_be_unique_signed_fb_and_in_portal_master(run, contracts, reason):
+    [p] = run(row(*ORG), contracts=contracts)
+    assert (p.action, p.reasons) == (Action.REVIEW, [reason])
+
+
+def test_op_contract_model_blocks_even_if_fbjt_op_empty(run, master_tables):
+    hd = master_tables["HOP_DONG"]
+    model = hd[0].index("Mô hình")
+    for r in hd[1:]:
+        if r[0] == "01/2026/HĐDV/EZS-ORGANICA":
+            r[model] = "OP"
+    [p] = run(row(*ORG), master_=MasterRepository(lambda: master_tables).get())
+    assert p.action is Action.REVIEW and "CONTRACT_MODEL_OP" in p.reasons
+
+
+def test_nmv_only_delivered_and_excluded_statuses_are_reported(run):
+    url = "https://docs.google.com/spreadsheets/d/1StatusMixAbCdEfGhIjKlMnOp/edit"
+    orders = {**ORDERS, url: order_rows([
+        ["03/05/2026", "X1", "Đã giao", "Organica", "ORG-01", "Serum", 1, 1_000_000],
+        ["04/05/2026", "X2", "Hoàn hàng", "Organica", "ORG-01", "Serum", 1, 500_000],
+        ["05/05/2026", "X3", "Đã hủy", "Organica", "ORG-01", "Serum", 1, 2_000_000],
+        ["06/05/2026", "X4", "Đang giao", "Organica", "ORG-01", "Serum", 1, 3_000_000],   # status lạ
+    ])}
+    [p] = run(row(*ORG), links=[OrderLink("ORGANICA", "BDAY - 05/2026", url)], orders=orders)
+    cells = {c.column: c.target for c in p.cells}
+    assert cells["nmv"] == 1_000_000 and cells["gmv"] == 6_500_000
+    assert p.warnings == {"RETURNED": 1, "CANCELLED": 1, "UNKNOWN_STATUS": 1}
+    # Hiện tại status lạ bị LOẠI khỏi NMV và chỉ cảnh báo (không chặn) — chờ quyết định Q9.
+    assert p.action is Action.DRAFT
+
+
+def test_k_keeps_ezs_vat_8_and_sassy_deduct_1(run):
+    [ezs] = run(row(*ORG))
+    c = {x.column: x.target for x in ezs.cells}
+    rev = (c["nmv"] * Decimal("0.18")).quantize(Decimal(1))
+    assert c["commission"] == rev + (rev * Decimal("0.08")).quantize(Decimal(1))
+    [ss] = run(row("SHISEIDO", "Q3 - 09/2026", "30/09/2026", "SASSY", group="SHISEIDO_GRP"),
+               row("ANESSA", "Q3 - 09/2026", "30/09/2026", "SASSY", group="SHISEIDO_GRP"), today=date(2026, 10, 25))
+    nmv = sum(x.target for x in ss.cells if x.column == "nmv")
+    rev = (nmv * Decimal("0.15")).quantize(Decimal(1))
+    assert sum(x.target for x in ss.cells if x.column == "commission") == rev - (rev * Decimal("0.01")).quantize(
+        Decimal(1))
+
+
+def test_rerun_same_case_is_deterministic(run):
+    assert run(row(*ORG)) == run(row(*ORG))
+
+
+def test_rerun_in_another_month_keeps_number_only_with_stored_issued_at(run):
+    nov = datetime(2026, 11, 20, 2, 0, tzinfo=UTC)
+    [fresh] = run(row(*ORG), now=nov, today=nov.date())
+    assert fresh.bbnt_number == "11.26/BBNT-ORGANICA-EZ-FB-BDAY.0526"      # lập mới -> tháng lập mới
+    [again] = run(row(*ORG), now=nov, today=nov.date(), issued_at={ORG_ID: NOW})
+    assert again.bbnt_number == "10.26/BBNT-ORGANICA-EZ-FB-BDAY.0526"      # đã lưu issued_at -> số cũ
+    assert [c.target for c in again.cells] == [c.target for c in run(row(*ORG))[0].cells]
+
+
+def test_issue_after_tax_rule_expiry_goes_to_review(run):
+    jan = datetime(2027, 1, 5, 2, 0, tzinfo=UTC)
+    [p] = run(row(*ORG), now=jan, today=jan.date())
+    assert (p.action, p.reasons) == (Action.REVIEW, ["TAX_RULE_MISSING"])   # không đoán thuế suất 2027
+    [p] = run(row(*ORG), now=jan, today=jan.date(), issued_at={ORG_ID: NOW})
+    assert p.action is Action.DRAFT
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "recon_dry_run.json"
+
+
+def test_representative_fixture_covers_all_actions(capsys):
+    assert worker.main(["dry-run", "--fixture", str(FIXTURE), "--master-file", str(MASTER_XLSX),
+                        "--today", "2026-10-28"]) == 0
+    out = capsys.readouterr().out
+    tags = [line.split("]")[0] + "]" for line in out.splitlines() if line.startswith("[")]
+    assert sorted(set(tags)) == ["[DRAFT]", "[REVIEW]", "[SKIP]", "[WAIT]"], out

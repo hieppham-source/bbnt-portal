@@ -4,6 +4,8 @@ sẽ làm gì, **không ghi gì cả** (không DB, không sheet, không email). 
 khi có token bot.
 
 Mỗi link order = 1 case (docs/ARCHITECTURE.md 14.1); 1 link có thể phủ nhiều dòng FB.JT (1 dòng/brand).
+Định danh case = **spreadsheet id** của link (như ``recon_case.order_sheet_id`` UNIQUE), không phải chuỗi URL —
+``/edit#gid=0`` và ``/edit?usp=sharing`` của cùng 1 file là 1 case.
 
     python -m app.recon.worker dry-run --fixture fixture.json --master-file deploy/MASTER_BBNT_TEMPLATE.xlsx
 
@@ -17,7 +19,7 @@ import argparse
 import enum
 import json
 import sys
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -51,6 +53,10 @@ class Action(str, enum.Enum):
     DRAFT = "DRAFT"      # tạo BBNT được; kèm kế hoạch ghi ô I/K/M
 
 
+#: Cảnh báo generator được đưa ra plan để KAM thấy (không chặn — xem docs/OPEN_QUESTIONS.md Q9).
+WARNING_CODES = ("RETURNED", "CANCELLED", "UNKNOWN_STATUS")
+
+
 @dataclass(frozen=True)
 class CellPlan:
     row_number: int
@@ -63,6 +69,7 @@ class CellPlan:
 @dataclass
 class CasePlan:
     url: str | None
+    order_sheet_id: str | None
     rows: list[int]
     brands: list[str]
     campaign: str
@@ -71,6 +78,8 @@ class CasePlan:
     send_from: date | None = None
     bbnt_number: str | None = None
     cells: list[CellPlan] = field(default_factory=list)
+    #: Số dòng order bị loại khỏi NMV theo mã (Hoàn / Hủy / status lạ).
+    warnings: dict[str, int] = field(default_factory=dict)
 
 
 def _commission_k(r: BbntResult) -> Decimal:
@@ -106,26 +115,45 @@ def cell_plans(rows: Sequence[FbjtRow], r: BbntResult) -> tuple[list[CellPlan], 
 
 def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink], contracts: Sequence[ContractRow],
                master: MasterData, templates: TemplateRegistry, open_order: Callable[[str], OrderOpener], *,
-               today: date, now: datetime) -> list[CasePlan]:
+               today: date, now: datetime, issued_at: Mapping[str, datetime] | None = None) -> list[CasePlan]:
+    """``issued_at``: ``bbnt_issued_at`` đã lưu theo ``order_sheet_id`` — chạy lại (kể cả tháng khác) ra đúng
+    số BBNT cũ. Case chưa có -> dùng ``now`` (lần lập đầu)."""
     outcome = parse_rows(fbjt_values)
-    index: dict[tuple[str, str], set[str]] = {}
+    plans: list[CasePlan] = [CasePlan(None, None, [n], [], "", Action.REVIEW, ["FBJT_ROW_INVALID"])
+                             for n, _msg in outcome.issues]
+    index: dict[tuple[str, str], dict[str, str]] = {}      # key -> {sheet_id: url}
+    bad_links: set[tuple[str, str]] = set()
     for link in links:
-        index.setdefault(row_key(link.brand, link.campaign), set()).add(link.url.strip())
+        key = row_key(link.brand, link.campaign)
+        try:
+            sid = parse_sheet_url(link.url).spreadsheet_id
+        except ValueError:
+            bad_links.add(key)
+            continue
+        index.setdefault(key, {}).setdefault(sid, link.url.strip())
 
-    plans: list[CasePlan] = []
+    seen: dict[tuple[str, str], int] = {}
+    for row in outcome.rows:
+        seen[row_key(row.brand, row.campaign)] = seen.get(row_key(row.brand, row.campaign), 0) + 1
     groups: dict[str, list[FbjtRow]] = {}
     for row in outcome.rows:
-        urls = index.get(row_key(row.brand, row.campaign), set())
-        if len(urls) != 1:
-            plans.append(CasePlan(None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
-                                  ["LINK_NOT_FOUND" if not urls else "LINK_AMBIGUOUS"]))
-            continue
-        groups.setdefault(next(iter(urls)), []).append(row)
+        key = row_key(row.brand, row.campaign)
+        sheets = index.get(key, {})
+        if seen[key] > 1:
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
+                                  ["FBJT_ROW_DUPLICATE"]))
+        elif key in bad_links or len(sheets) != 1:
+            code = "LINK_INVALID" if key in bad_links else "LINK_NOT_FOUND" if not sheets else "LINK_AMBIGUOUS"
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP, [code]))
+        else:
+            groups.setdefault(next(iter(sheets)), []).append(row)
+    urls = {sid: url for d in index.values() for sid, url in d.items()}
 
-    for url, rows in groups.items():
+    for sid, rows in groups.items():
+        url = urls[sid]
         brands = sorted({r.brand for r in rows})
         campaigns = {r.campaign for r in rows}
-        plan = CasePlan(url, [r.row_number for r in rows], brands, rows[0].campaign, Action.REVIEW)
+        plan = CasePlan(url, sid, [r.row_number for r in rows], brands, rows[0].campaign, Action.REVIEW)
         plans.append(plan)
         ends = [r.camp_end for r in rows]
         if any(e is None for e in ends):
@@ -136,6 +164,9 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             plan.action = Action.WAIT
             continue
         entities = {normalize_text(r.entity_b) for r in rows}
+        # Link phủ (BRAND, CAMP) nào thì FB.JT phải có đúng các dòng đó (dòng thiếu / Done / lỗi -> không tách số)
+        if {k for k, d in index.items() if sid in d} != {row_key(r.brand, r.campaign) for r in rows}:
+            plan.reasons.append("BRAND_ROWS_MISMATCH")
         if len(campaigns) != 1:
             plan.reasons.append("CAMPAIGN_MISMATCH")
         if len(entities) != 1:
@@ -152,11 +183,16 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             plan.reasons.append("CONTRACT_NOT_UNIQUE")
             continue
         out = make_bbnt(templates, master, CaseBbnt(entity, brands, plan.campaign, found[0]), open_order(url),
-                        issued_at=now, render=False)
+                        issued_at=(issued_at or {}).get(sid, now), render=False)
         if out.result is None:
             plan.reasons.extend(out.reasons)
             continue
         plan.bbnt_number = str(out.result.number)
+        for w in out.result.warnings:
+            if w.code.value in WARNING_CODES:
+                plan.warnings[w.code.value] = plan.warnings.get(w.code.value, 0) + 1
+        if out.result.contract.model != "NON_OP":      # chỉ FB Non-OP (11.2-1); dry-run không render template
+            plan.reasons.append("CONTRACT_MODEL_OP")
         plan.cells, problems = cell_plans(rows, out.result)
         plan.reasons.extend(problems)
         if any(c.action is CellAction.REVIEW for c in plan.cells):
@@ -168,9 +204,11 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
 
 # --------------------------------------------------------------------------------------------------------- CLI
 def _fixture_opener(orders: dict[str, list[list[Any]]]) -> Callable[[str], OrderOpener]:
+    by_id = {parse_sheet_url(u).spreadsheet_id: rows for u, rows in orders.items()}
+
     def for_url(url: str) -> OrderOpener:
         def open_() -> list[OrderWorkbook]:
-            rows = orders.get(url)
+            rows = by_id.get(parse_sheet_url(url).spreadsheet_id)
             if rows is None:
                 raise SheetAccessError(f"Fixture không có dữ liệu order cho {url}")
             return [OrderWorkbook("google_sheet", ["ORDER"], lambda _t: rows)]
@@ -203,7 +241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[{pl.action.value}] dòng {','.join(map(str, pl.rows))} · {'/'.join(pl.brands)} · {pl.campaign}"
               + (f" · gửi từ {pl.send_from:%d/%m/%Y}" if pl.send_from else "")
               + (f" · {pl.bbnt_number}" if pl.bbnt_number else "")
-              + (f" · lý do: {', '.join(pl.reasons)}" if pl.reasons else ""))
+              + (f" · lý do: {', '.join(pl.reasons)}" if pl.reasons else "")
+              + (f" · loại khỏi NMV: {pl.warnings}" if pl.warnings else ""))
         for c in pl.cells:
             print(f"    dòng {c.row_number} {c.column}: {_fmt(c.current)} -> {_fmt(c.target)} [{c.action.value}]")
     return 0
