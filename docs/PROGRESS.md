@@ -34,3 +34,4 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 - 28/10/2026 — Q9 (thêm status tính NMV, portal + bot) và Q12 (hợp đồng hiệu lực theo ngày lập BBNT, bot). pytest 596 passed, 1 skipped.
 - 28/10/2026 — Q13 duyệt: migration `0002_recon_idempotency` (cột review/plan hash/run trên `recon_case`, bảng `sheet_write` idempotent) + 2 test. pytest 598 passed, 1 skipped.
 - 28/10/2026 — Bước 5 (đọc): `google_bot.py` (token nền, DATA CONTRACT/BRAND, chip link NON OP), `dry-run --live`, workflow `recon-dry-run` (chạy tay). pytest 616 passed.
+- 28/10/2026 — Dry-run thật đầu tiên: 619 dòng, DRAFT 2. Branch `feat/recon-dry-run-diagnostics`: nối tên chịu khác cách gõ, OP bị SKIP sớm, gợi ý sửa dữ liệu trong báo cáo. pytest 618 passed.

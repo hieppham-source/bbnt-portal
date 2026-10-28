@@ -95,7 +95,7 @@ def test_wait_skip_and_blocking_reasons(run):
 
 def test_op_and_contract_problems_block(run):
     [op] = run(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS", op="OP"))
-    assert (op.action, op.reasons) == (Action.REVIEW, ["NOT_FB_NON_OP"])
+    assert (op.action, op.reasons) == (Action.SKIP, ["NOT_FB_NON_OP"])      # OP: ngoài phạm vi bot
     [nc] = run(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS"), contracts=[])
     assert (nc.action, nc.reasons) == (Action.REVIEW, ["CONTRACT_NOT_UNIQUE"])
 
@@ -256,3 +256,16 @@ def test_contract_must_be_valid_on_bbnt_date(run, master_tables, valid_from, val
     [p] = run(row(*ORG), master_=MasterRepository(lambda: master_tables).get())
     assert (p.action is Action.DRAFT) is ok
     assert ("CONTRACT_NOT_VALID_ON_BBNT_DATE" in p.reasons) is not ok
+
+
+def test_join_tolerates_spacing_date_format_and_brand_punctuation(run):
+    links = [OrderLink("Organica.", "BDAY- 5.26", ORDER_URL_FB)]     # gõ khác FB.JT nhưng cùng nghĩa
+    [p] = run(row(*ORG), links=links)
+    assert p.action is Action.DRAFT
+
+
+def test_link_not_found_hints_same_brand_same_month(run):
+    links = [OrderLink("ORGANICA", "MIX FOOD - 05/2026", ORDER_URL_FB)]
+    [p] = run(row(*ORG), links=links)
+    assert p.reasons == ["LINK_NOT_FOUND"] and p.hints == ["NON OP cùng brand, cùng tháng: MIX FOOD - 05/2026"]
+    assert "gợi ý: NON OP" in "\n".join(worker._report([p])) and "MIX FOOD" not in "\n".join(worker.summary([p]))

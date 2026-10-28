@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -166,6 +167,21 @@ def parse_rows(values: Sequence[Sequence[Any]], *, header_row: int = HEADER_ROW)
     return out
 
 
+def brand_key(brand: str) -> str:
+    """Chỉ giữ chữ + số: 'BIA EFFECT' = 'BIAEFFECT', "KIEHL'S" = 'KIEHLS', 'DR. JART+' = 'DR JART'."""
+    return re.sub(r"[^0-9a-z]", "", normalize_text(brand))
+
+
+def campaign_key(campaign: str) -> str:
+    """Chuẩn hoá cách gõ, không đổi nghĩa: 'MIX- 03/2026' = 'MIX - 3/2026'; 'HOMELIVING - 01.26' = '... 01/2026'."""
+    s = re.sub(r"\s*-\s*", " - ", normalize_text(campaign))
+    m = re.search(r"(\d{1,2})\s*[./]\s*(\d{4}|\d{2})$", s)
+    if m:
+        year = m[2] if len(m[2]) == 4 else f"20{m[2]}"
+        s = f"{s[:m.start()]}{int(m[1]):02d}/{year}"
+    return s
+
+
 def row_key(brand: str, campaign: str) -> tuple[str, str]:
     """Khoá nối FB.JT (BRAND, CAMPAIGN) <-> link order NON OP {YY} (BRAND, CAMP)."""
-    return normalize_text(brand), normalize_text(campaign)
+    return brand_key(brand), campaign_key(campaign)

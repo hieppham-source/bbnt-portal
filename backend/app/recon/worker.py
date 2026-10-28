@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import enum
 import json
+import re
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -31,7 +32,7 @@ from app.config import DEFAULT_TEMPLATES_DIR
 from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
-from app.recon.fbjt import FbjtRow, parse_rows, row_key
+from app.recon.fbjt import FbjtRow, brand_key, campaign_key, parse_rows, row_key
 from app.recon.rules import CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
 from app.services.sheets import OrderWorkbook, SheetAccessError, parse_sheet_url
@@ -79,6 +80,8 @@ class CasePlan:
     send_from: date | None = None
     bbnt_number: str | None = None
     cells: list[CellPlan] = field(default_factory=list)
+    #: Gợi ý sửa dữ liệu — chỉ in trong báo cáo chi tiết (--out), không vào log CI.
+    hints: list[str] = field(default_factory=list)
     #: Số dòng order bị loại khỏi NMV theo mã (Hoàn / Hủy / status lạ).
     warnings: dict[str, int] = field(default_factory=dict)
 
@@ -134,6 +137,14 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             continue
         index.setdefault(key, {}).setdefault(sid, link.url.strip())
 
+    camps_of: dict[str, set[str]] = {}      # brand_key -> CAMP trong NON OP (gợi ý khi không thấy link)
+    for link in links:
+        camps_of.setdefault(row_key(link.brand, link.campaign)[0], set()).add(link.campaign.strip())
+
+    def is_op(row: FbjtRow) -> bool:      # FB.JT OP hoặc DATA BRAND.OP (11.2-1) -> ngoài phạm vi bot
+        return not row.is_non_op or normalize_text((brand_op or {}).get(brand_key(row.brand), "")) not in ("",
+                                                                                                         "non op")
+
     seen: dict[tuple[str, str], int] = {}
     for row in outcome.rows:
         seen[row_key(row.brand, row.campaign)] = seen.get(row_key(row.brand, row.campaign), 0) + 1
@@ -141,12 +152,21 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
     for row in outcome.rows:
         key = row_key(row.brand, row.campaign)
         sheets = index.get(key, {})
-        if seen[key] > 1:
+        if is_op(row):
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
+                                  ["NOT_FB_NON_OP"]))
+        elif seen[key] > 1:
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["FBJT_ROW_DUPLICATE"]))
         elif key in bad_links or len(sheets) != 1:
             code = "LINK_INVALID" if key in bad_links else "LINK_NOT_FOUND" if not sheets else "LINK_AMBIGUOUS"
-            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP, [code]))
+            pl = CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP, [code])
+            if code == "LINK_NOT_FOUND":
+                month = key[1][-7:] if re.search(r"\d{2}/\d{4}$", key[1]) else ""
+                near = sorted(c for c in camps_of.get(key[0], set()) if campaign_key(c).endswith(month))
+                pl.hints.append("NON OP cùng brand, cùng tháng: " + (", ".join(near[:3]) if near
+                                                                     else "không có (brand chưa có link tháng này)"))
+            plans.append(pl)
         else:
             groups.setdefault(next(iter(sheets)), []).append(row)
     urls = {sid: url for d in index.values() for sid, url in d.items()}
@@ -173,11 +193,9 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             plan.reasons.append("CAMPAIGN_MISMATCH")
         if None in entities:
             plan.reasons.append("ENTITY_UNKNOWN")
+            plan.hints.append("BÊN B: " + ", ".join(sorted({repr(r.entity_b) for r in rows})))
         elif len(entities) != 1:
             plan.reasons.append("ENTITY_MISMATCH")
-        data_brand_op = [(brand_op or {}).get(normalize_text(r.brand), "") for r in rows]
-        if not all(r.is_non_op for r in rows) or any(normalize_text(v) not in ("", "non op") for v in data_brand_op):
-            plan.reasons.append("NOT_FB_NON_OP")         # FB.JT OP hoặc DATA BRAND.OP (11.2-1)
         if plan.reasons:
             continue
         entity = next(e for e in entities if e)
@@ -186,6 +204,8 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
                                  group_code=next(iter(groups_)) if len(groups_) == 1 else None)
         if len(found) != 1:
             plan.reasons.append("CONTRACT_NOT_UNIQUE")
+            plan.hints.append(f"DATA CONTRACT 'Đã ký' khớp {'/'.join(brands)} + {entity}: "
+                              + (", ".join(found) if found else "không có"))
             continue
         out = make_bbnt(templates, master, CaseBbnt(entity, brands, plan.campaign, found[0]), open_order(url),
                         issued_at=(issued_at or {}).get(sid, now), render=False)
@@ -236,7 +256,9 @@ def _report(plans: Sequence[CasePlan]) -> list[str]:
                      + (f" · gửi từ {pl.send_from:%d/%m/%Y}" if pl.send_from else "")
                      + (f" · {pl.bbnt_number}" if pl.bbnt_number else "")
                      + (f" · lý do: {', '.join(pl.reasons)}" if pl.reasons else "")
-                     + (f" · loại khỏi NMV: {pl.warnings}" if pl.warnings else ""))
+                     + (f" · loại khỏi NMV: {pl.warnings}" if pl.warnings else "")
+                     + (f" · link: {pl.url}" if pl.url and pl.action is not Action.DRAFT else ""))
+        lines += [f"    gợi ý: {h}" for h in pl.hints]
         for c in pl.cells:
             lines.append(f"    dòng {c.row_number} {c.column}: {_fmt(c.current)} -> {_fmt(c.target)} "
                          f"[{c.action.value}]")
