@@ -19,6 +19,7 @@ import argparse
 import enum
 import json
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -31,7 +32,7 @@ from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
 from app.recon.fbjt import FbjtRow, parse_rows, row_key
-from app.recon.rules import CellAction, acceptance_send_date, allocate_total, plan_cell
+from app.recon.rules import CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
 from app.services.sheets import OrderWorkbook, SheetAccessError, parse_sheet_url
 from app.services.templates import TemplateRegistry
@@ -115,9 +116,10 @@ def cell_plans(rows: Sequence[FbjtRow], r: BbntResult) -> tuple[list[CellPlan], 
 
 def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink], contracts: Sequence[ContractRow],
                master: MasterData, templates: TemplateRegistry, open_order: Callable[[str], OrderOpener], *,
-               today: date, now: datetime, issued_at: Mapping[str, datetime] | None = None) -> list[CasePlan]:
+               today: date, now: datetime, issued_at: Mapping[str, datetime] | None = None,
+               brand_op: Mapping[str, str] | None = None) -> list[CasePlan]:
     """``issued_at``: ``bbnt_issued_at`` đã lưu theo ``order_sheet_id`` — chạy lại (kể cả tháng khác) ra đúng
-    số BBNT cũ. Case chưa có -> dùng ``now`` (lần lập đầu)."""
+    số BBNT cũ. Case chưa có -> dùng ``now`` (lần lập đầu). ``brand_op``: DATA BRAND brand (chuẩn hoá) -> cột OP."""
     outcome = parse_rows(fbjt_values)
     plans: list[CasePlan] = [CasePlan(None, None, [n], [], "", Action.REVIEW, ["FBJT_ROW_INVALID"])
                              for n, _msg in outcome.issues]
@@ -163,19 +165,22 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
         if today < plan.send_from:
             plan.action = Action.WAIT
             continue
-        entities = {normalize_text(r.entity_b) for r in rows}
+        entities = {entity_code(r.entity_b) for r in rows}
         # Link phủ (BRAND, CAMP) nào thì FB.JT phải có đúng các dòng đó (dòng thiếu / Done / lỗi -> không tách số)
         if {k for k, d in index.items() if sid in d} != {row_key(r.brand, r.campaign) for r in rows}:
             plan.reasons.append("BRAND_ROWS_MISMATCH")
         if len(campaigns) != 1:
             plan.reasons.append("CAMPAIGN_MISMATCH")
-        if len(entities) != 1:
+        if None in entities:
+            plan.reasons.append("ENTITY_UNKNOWN")
+        elif len(entities) != 1:
             plan.reasons.append("ENTITY_MISMATCH")
-        if not all(r.is_non_op for r in rows):
-            plan.reasons.append("NOT_FB_NON_OP")
+        data_brand_op = [(brand_op or {}).get(normalize_text(r.brand), "") for r in rows]
+        if not all(r.is_non_op for r in rows) or any(normalize_text(v) not in ("", "non op") for v in data_brand_op):
+            plan.reasons.append("NOT_FB_NON_OP")         # FB.JT OP hoặc DATA BRAND.OP (11.2-1)
         if plan.reasons:
             continue
-        entity = rows[0].entity_b.upper()
+        entity = next(e for e in entities if e)
         groups_ = {r.group for r in rows if r.group}
         found = signed_contracts(contracts, brand_codes=brands, entity=entity,
                                  group_code=next(iter(groups_)) if len(groups_) == 1 else None)
@@ -224,30 +229,94 @@ def _fmt(v: Decimal | None) -> str:
     return "-" if v is None else f"{v:,.0f}".replace(",", ".")
 
 
+def _report(plans: Sequence[CasePlan]) -> list[str]:
+    lines: list[str] = []
+    for pl in plans:
+        lines.append(f"[{pl.action.value}] dòng {','.join(map(str, pl.rows))} · {'/'.join(pl.brands)} · {pl.campaign}"
+                     + (f" · gửi từ {pl.send_from:%d/%m/%Y}" if pl.send_from else "")
+                     + (f" · {pl.bbnt_number}" if pl.bbnt_number else "")
+                     + (f" · lý do: {', '.join(pl.reasons)}" if pl.reasons else "")
+                     + (f" · loại khỏi NMV: {pl.warnings}" if pl.warnings else ""))
+        for c in pl.cells:
+            lines.append(f"    dòng {c.row_number} {c.column}: {_fmt(c.current)} -> {_fmt(c.target)} "
+                         f"[{c.action.value}]")
+    return lines
+
+
+def summary(plans: Sequence[CasePlan]) -> list[str]:
+    """Chỉ số đếm theo action + mã lý do — không có brand, số tiền (an toàn cho log CI)."""
+    actions = Counter(p.action.value for p in plans)
+    reasons = Counter(r for p in plans for r in p.reasons)
+    return ([f"{k}: {actions[k]}" for k in ("SKIP", "WAIT", "REVIEW", "DRAFT")]
+            + [f"  {r}: {n}" for r, n in sorted(reasons.items())])
+
+
+def _live(today: date, now: datetime) -> list[CasePlan]:
+    from app.master.repository import build_master, google_sheet_source
+    from app.recon.google_bot import (
+        BotEnv,
+        BotSheets,
+        parse_brand_op,
+        parse_contracts,
+        parse_order_links,
+        refresh_access_token,
+    )
+    from app.services.sheets import GoogleSheetsReader, SheetRef
+
+    env = BotEnv.from_env()
+    token = refresh_access_token(env)
+    reader = GoogleSheetsReader(token)
+    fbjt = SheetRef(env.fbjt_id)
+    links = [OrderLink(*x) for x in parse_order_links(BotSheets(token).grid_rows(env.order_links_id,
+                                                                                 f"NON OP {today:%y}"))]
+
+    def open_order(url: str) -> OrderOpener:
+        ref = parse_sheet_url(url)
+        return lambda: [reader.open(ref)]
+
+    return plan_cases(reader.read(fbjt, sheet_name=f"FB-{today.year}"), links,
+                      parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")),
+                      build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))()),
+                      TemplateRegistry(DEFAULT_TEMPLATES_DIR), open_order, today=today, now=now,
+                      brand_op=parse_brand_op(reader.read(fbjt, sheet_name="DATA BRAND")))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from app.master.repository import build_master, xlsx_source
 
     p = argparse.ArgumentParser(prog="python -m app.recon.worker")
     p.add_argument("mode", choices=["dry-run"])
-    p.add_argument("--fixture", required=True, type=Path)
-    p.add_argument("--master-file", required=True)
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--fixture", type=Path, help="JSON giả lập (cần --master-file)")
+    src.add_argument("--live", action="store_true", help="Đọc Google thật bằng token nền (biến RECON_*), chỉ đọc")
+    p.add_argument("--master-file")
     p.add_argument("--today", type=date.fromisoformat, default=None)
+    p.add_argument("--summary", action="store_true", help="Chỉ in số đếm (cho log CI); chi tiết ghi vào --out")
+    p.add_argument("--out", type=Path, help="Ghi báo cáo chi tiết vào file")
     a = p.parse_args(argv)
-    data = json.loads(a.fixture.read_text(encoding="utf-8"))
-    master = build_master(xlsx_source(a.master_file)())
     now = datetime.now(UTC)
-    plans = plan_cases(data["fbjt"], [OrderLink(**x) for x in data["links"]],
-                       [ContractRow(**x) for x in data.get("contracts", [])], master,
-                       TemplateRegistry(DEFAULT_TEMPLATES_DIR), _fixture_opener(data.get("orders", {})),
-                       today=a.today or now.date(), now=now)
-    for pl in plans:
-        print(f"[{pl.action.value}] dòng {','.join(map(str, pl.rows))} · {'/'.join(pl.brands)} · {pl.campaign}"
-              + (f" · gửi từ {pl.send_from:%d/%m/%Y}" if pl.send_from else "")
-              + (f" · {pl.bbnt_number}" if pl.bbnt_number else "")
-              + (f" · lý do: {', '.join(pl.reasons)}" if pl.reasons else "")
-              + (f" · loại khỏi NMV: {pl.warnings}" if pl.warnings else ""))
-        for c in pl.cells:
-            print(f"    dòng {c.row_number} {c.column}: {_fmt(c.current)} -> {_fmt(c.target)} [{c.action.value}]")
+    today = a.today or now.date()
+    if a.live:
+        from app.recon.google_bot import BotConfigError
+
+        try:
+            plans = _live(today, now)
+        except Exception as exc:  # noqa: BLE001 — log CI: không in chi tiết có thể chứa dữ liệu brand
+            print(f"LỖI {type(exc).__name__}: {exc if isinstance(exc, BotConfigError) else '(chi tiết ẩn)'}",
+                  file=sys.stderr)
+            return 1
+    else:
+        if not a.master_file:
+            p.error("--fixture cần --master-file")
+        data = json.loads(a.fixture.read_text(encoding="utf-8"))
+        plans = plan_cases(data["fbjt"], [OrderLink(**x) for x in data["links"]],
+                           [ContractRow(**x) for x in data.get("contracts", [])],
+                           build_master(xlsx_source(a.master_file)()), TemplateRegistry(DEFAULT_TEMPLATES_DIR),
+                           _fixture_opener(data.get("orders", {})), today=today, now=now)
+    detail = _report(plans)
+    if a.out:
+        a.out.write_text("\n".join(detail) + "\n", encoding="utf-8")
+    print("\n".join(summary(plans) if a.summary else detail))
     return 0
 
 

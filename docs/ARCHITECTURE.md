@@ -885,3 +885,4 @@ Làm rõ 15.2: đơn vị gửi nhắc là **1 loopmail**, không phải 1 brand
 - Trạng thái bền vững, idempotency, ghi Sheet có kiểm soát: `docs/RECON_STATE_PROPOSAL.md` (**chờ duyệt**, chưa triển khai).
 - Chốt 28/10/2026 (OPEN_QUESTIONS Q9–Q12): NMV tính cả status hoàn thành / đã xong / confirm (portal + bot); thuế 2027 giữ nguyên cấu hình; bot chưa làm TikTok Shop; bot kiểm hiệu lực hợp đồng theo ngày lập BBNT.
 - Chốt 28/10/2026 (Q13): duyệt `RECON_STATE_PROPOSAL.md` + migration `0002`. Bot được thêm cột vào file link tổng order (`NON OP {YY}`); FB.JT vẫn không thêm cột.
+- Bot đọc Google (28/10): `BÊN B` thật dạng `Cty EZS` / `HKD SASSY` → chuẩn hoá EZS/SASSY (`rules.entity_code`), không nhận diện được → REVIEW `ENTITY_UNKNOWN`. `DATA CONTRACT` không có cột kênh → mọi dòng coi là FB (file FB.JT). `DATA BRAND.OP` khác trống → `NOT_FB_NON_OP`. File order không mở được → `ORDER_SHEET_UNREADABLE`.

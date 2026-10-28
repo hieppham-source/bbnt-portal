@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
+from app.core.calculation import normalize_text as _norm
+
 #: Email nghiệm thu đầu tiên: ngày kết thúc camp (FB.JT cột G) + 25 ngày lịch.
 ACCEPTANCE_DELAY_DAYS = 25
 #: Brand confirm BBNT / hoá đơn nháp: 3 ngày làm việc.
@@ -200,3 +202,13 @@ def invoices_total(rows: Iterable[tuple[str, Decimal]]) -> dict[str, Decimal]:
     for number, k in rows:
         out[number] = out.get(number, Decimal(0)) + k
     return out
+
+
+# =============================================================================
+# Pháp nhân Bên B
+# =============================================================================
+def entity_code(text: str) -> str | None:
+    """'Cty EZS' / 'EZS' -> EZS; 'HKD SASSY' / 'SASSY' -> SASSY; khác -> None (REVIEW, không đoán)."""
+    words = set(_norm(text).split())
+    hits = {code for code, keys in (("EZS", {"ezs", "ez"}), ("SASSY", {"sassy", "ss"})) if words & keys}
+    return hits.pop() if len(hits) == 1 else None

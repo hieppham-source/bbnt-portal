@@ -1,0 +1,50 @@
+# Worker đối soát — dry-run trên dữ liệu Google THẬT, CHỈ ĐỌC (không ghi Sheet, không gửi email, không DB).
+# Chạy tay: Actions -> recon-dry-run -> Run workflow. Log chỉ có số đếm; báo cáo chi tiết (có brand, số tiền)
+# chỉ tải lên artifact khi chọn report=true, tự xoá sau 1 ngày.
+name: recon-dry-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      report:
+        description: "Lưu báo cáo chi tiết (artifact, giữ 1 ngày)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: recon-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_TIMEZONE: Asia/Ho_Chi_Minh
+      RECON_GOOGLE_CLIENT_ID: ${{ secrets.RECON_GOOGLE_CLIENT_ID }}
+      RECON_GOOGLE_CLIENT_SECRET: ${{ secrets.RECON_GOOGLE_CLIENT_SECRET }}
+      RECON_GOOGLE_REFRESH_TOKEN: ${{ secrets.RECON_GOOGLE_REFRESH_TOKEN }}
+      RECON_FBJT_ID: ${{ vars.RECON_FBJT_ID }}
+      RECON_ORDER_LINKS_ID: ${{ vars.RECON_ORDER_LINKS_ID }}
+      MASTER_SHEET_URL: ${{ vars.MASTER_SHEET_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements.txt
+      - run: python -m app.recon.worker dry-run --live --summary --out "$RUNNER_TEMP/recon-report.txt"
+      - if: ${{ inputs.report }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-dry-run-report
+          path: ${{ runner.temp }}/recon-report.txt
+          retention-days: 1
