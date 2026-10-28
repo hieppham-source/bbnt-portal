@@ -1,4 +1,5 @@
 """Kết nối Google của bot (plan bước 5) — dữ liệu giả lập, không gọi Google."""
+from datetime import date
 from typing import Any
 
 import pytest
@@ -154,7 +155,7 @@ def test_data_brand_op_blocks(master_tables, run):
     from .test_recon_worker import NOW, ORDERS, TODAY, sheet
     plans = worker.plan_cases(sheet(row(*ORG)), LINKS, CONTRACTS, MasterRepository(lambda: master_tables).get(),
                               TemplateRegistry(DEFAULT_TEMPLATES_DIR), worker._fixture_opener(ORDERS),
-                              today=TODAY, now=NOW, brand_op={"organica": "OP"})
+                              today=TODAY, now=NOW, brand_op={"organica": "OP"}, scope_from=date(2026, 1, 1))
     assert (plans[0].action, plans[0].reasons) == (Action.REVIEW, ["OP_CONFLICT_DATA_BRAND"])
 
 

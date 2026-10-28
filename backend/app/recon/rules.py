@@ -21,6 +21,8 @@ from app.core.calculation import normalize_text as _norm
 
 #: Email nghiệm thu đầu tiên: ngày kết thúc camp (FB.JT cột G) + 25 ngày lịch.
 ACCEPTANCE_DELAY_DAYS = 25
+#: Phạm vi bot: campaign từ tháng 08/2026 (từ đó KAM mới nhập cột G); trước đó đã nghiệm thu tay (chốt 28/10/2026).
+SCOPE_FROM = date(2026, 8, 1)
 #: Brand confirm BBNT / hoá đơn nháp: 3 ngày làm việc.
 CONFIRM_BUSINESS_DAYS = 3
 #: Hạn thanh toán: 10 ngày làm việc từ ngày hoá đơn chính thức.

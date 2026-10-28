@@ -43,9 +43,9 @@ def run(master_tables):
     templates = TemplateRegistry(DEFAULT_TEMPLATES_DIR)
 
     def go(*rows, contracts=CONTRACTS, today=TODAY, links=LINKS, orders=ORDERS, now=NOW, issued_at=None,
-           master_=master):
+           master_=master, scope_from=date(2026, 1, 1)):     # dữ liệu mẫu là tháng 05–09/2026
         return plan_cases(sheet(*rows), links, contracts, master_, templates, worker._fixture_opener(orders),
-                          today=today, now=now, issued_at=issued_at)
+                          today=today, now=now, issued_at=issued_at, scope_from=scope_from)
     return go
 
 
@@ -106,7 +106,7 @@ def test_cli_dry_run_prints_plan(tmp_path, capsys):
     f = tmp_path / "fixture.json"
     f.write_text(json.dumps(fixture, ensure_ascii=False), encoding="utf-8")
     assert worker.main(["dry-run", "--fixture", str(f), "--master-file", str(MASTER_XLSX),
-                        "--today", "2026-10-28"]) == 0
+                        "--today", "2026-10-28", "--scope-from", "2026-01-01"]) == 0
     out = capsys.readouterr().out
     assert "[DRAFT] dòng 7 · ORGANICA · BDAY - 05/2026" in out and "commission:" in out
 
@@ -236,7 +236,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "recon_dry_run.json"
 
 def test_representative_fixture_covers_all_actions(capsys):
     assert worker.main(["dry-run", "--fixture", str(FIXTURE), "--master-file", str(MASTER_XLSX),
-                        "--today", "2026-10-28"]) == 0
+                        "--today", "2026-10-28", "--scope-from", "2026-01-01"]) == 0
     out = capsys.readouterr().out
     tags = [line.split("]")[0] + "]" for line in out.splitlines() if line.startswith("[")]
     assert sorted(set(tags)) == ["[DRAFT]", "[REVIEW]", "[SKIP]", "[WAIT]"], out
@@ -277,3 +277,14 @@ def test_link_not_found_hints_same_brand_same_month(run):
 def test_column_h_non_op_op_or_review(run, h, action, reason):
     [p] = run(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS", op=h))
     assert p.action is action and p.reasons == ([reason] if reason else [])
+
+
+def test_scope_starts_august_2026(run):
+    from app.recon.rules import SCOPE_FROM
+    assert SCOPE_FROM == date(2026, 8, 1)
+    plans = run(row(*ORG), row("ORGANICA", "BDAY 2026", "", "EZS"), row("SHISEIDO", "THÁNG 9", "30/09/2026", "SASSY"),
+                scope_from=SCOPE_FROM)
+    by = {p.rows[0]: (p.action, p.reasons) for p in plans}
+    assert by[7] == (Action.SKIP, ["BEFORE_SCOPE"])                   # BDAY - 05/2026: nghiệm thu tay
+    assert by[8] == (Action.REVIEW, ["CAMPAIGN_MONTH_UNKNOWN"])       # không có tháng, G trống
+    assert by[9][1] != ["BEFORE_SCOPE"]                               # không có tháng nhưng G = 30/09 -> trong phạm vi
