@@ -74,4 +74,4 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
-      - run: pytest -q tests/test_recon_migrations.py
+      - run: pytest -q tests/test_recon_migrations.py tests/test_recon_db.py

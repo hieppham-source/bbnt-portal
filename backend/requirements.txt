@@ -8,3 +8,4 @@ openpyxl>=3.1
 google-auth>=2.30
 requests>=2.31
 tzdata>=2024.1
+psycopg[binary]>=3.2,<4   # kho trạng thái recon (Postgres) — app/recon/db.py

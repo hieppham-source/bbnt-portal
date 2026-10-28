@@ -14,8 +14,9 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 | P2 Neon production DB | BLOCKED | Chưa có `DATABASE_URL` |
 | P3 State machine (`app/recon/state_machine.py`) | TESTED | Không nhảy cóc, DONE chỉ từ SHEET, Giữ chỉ do USER, resume |
 | P3/P6 Quy tắc + Audit Gate (`rules.py`, `audit_gate.py`) | TESTED | Đuôi BBNT (bảng 12.3), HĐ, lịch T2–T6 + lễ, G+25, hạn 10 ngày LV, phạt 0,05%, chia K group, ghi ô I/K/M, AUTO/REVIEW/BLOCKED |
+| Repository DB `app/recon/db.py` | TESTED | create/move/resume, optimistic lock (`StaleCase`), transition + audit_log trong 1 transaction; 5 test Postgres |
 | P4 BBNT adapter | NOT_STARTED | |
-| P4 Portal bỏ gộp nhiều link / tách camp (cờ `ALLOW_MERGED_BBNT`) | TESTED | Bước 1 (khoá): API 422 `MERGED_BBNT_DISABLED`; form ẩn link phụ, "Theo camp", nút gộp/tách tab. Bước 2 (xoá code) sau 1–2 tháng |
+| P4 Portal bỏ gộp nhiều link / tách camp (cờ `ALLOW_MERGED_BBNT`) | DEPLOYED | Bước 1 (khoá): API 422 `MERGED_BBNT_DISABLED`; form ẩn link phụ, "Theo camp", nút gộp/tách tab. Bước 2 (xoá code) sau 1–2 tháng |
 | P5 Gmail connector | NOT_STARTED | Cần token (BLOCKED để test thật) |
 | P7 Worker `python -m app.worker` | NOT_STARTED | |
 | P8 API `/api/v1/recon/*` + dashboard `/reconcile` | NOT_STARTED | |
@@ -26,3 +27,4 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 - 27/10/2026 — commit local `feat/reconciliation-core` (xem `git log`). Test: 539 passed, 1 skipped (kèm migration test với `RECON_TEST_DATABASE_URL`). Chưa có PR: GitHub API trả 403 `Resource not accessible by integration` khi tạo branch.
 - 27/10/2026 — repo đã private. Push vẫn **BLOCKED**: git proxy báo repo không thuộc tập repo được cấp cho phiên; GitHub MCP trả 404 cho repo.
 - 28/10/2026 — PR #1 merged. Branch `feat/lock-merged-bbnt`: khoá gộp sau cờ. pytest 541 passed, 6 skipped; ruff, mypy strict, `tsc`, `next build` OK.
+- 28/10/2026 — PR #2 merged + deploy frontend. Branch `feat/recon-db`: kho trạng thái Postgres. pytest 551 passed khi có Postgres (541 + 11 skipped khi không).
