@@ -1,4 +1,5 @@
 """Kết nối Google của bot (plan bước 5) — dữ liệu giả lập, không gọi Google."""
+from datetime import date
 from typing import Any
 
 import pytest
@@ -86,8 +87,8 @@ DATA_CONTRACT = [
 def test_parse_contracts_rows_for_brand_and_group():
     got = parse_contracts(DATA_CONTRACT)
     assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO", "SASSY", "FB", "Đã ký") in got
-    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO_GRP", "SASSY", "FB", "Đã ký") in got
-    assert ContractRow("00/2025/OLD", "ORGANICA", "EZS", "FB", "Hết hạn") in got and len(got) == 3
+    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO_GRP", "SASSY", "FB", "Đã ký", "group") in got
+    assert ContractRow("00/2025/OLD", "ORGANICA", "EZS", "FB", "Hết hạn") in got and len(got) == 4
 
 
 def test_parse_contracts_missing_header():
@@ -154,7 +155,7 @@ def test_data_brand_op_blocks(master_tables, run):
     from .test_recon_worker import NOW, ORDERS, TODAY, sheet
     plans = worker.plan_cases(sheet(row(*ORG)), LINKS, CONTRACTS, MasterRepository(lambda: master_tables).get(),
                               TemplateRegistry(DEFAULT_TEMPLATES_DIR), worker._fixture_opener(ORDERS),
-                              today=TODAY, now=NOW, brand_op={"organica": "OP"})
+                              today=TODAY, now=NOW, brand_op={"organica": "OP"}, scope_from=date(2026, 1, 1))
     assert (plans[0].action, plans[0].reasons) == (Action.REVIEW, ["OP_CONFLICT_DATA_BRAND"])
 
 
@@ -176,3 +177,22 @@ def test_live_without_env_fails_fast(monkeypatch, capsys):
         monkeypatch.delenv(k, raising=False)
     assert worker.main(["dry-run", "--live", "--summary"]) == 1
     assert "Thiếu biến môi trường" in capsys.readouterr().err
+
+
+def test_contract_brand_match_wins_over_group_and_multi_brand_cells():
+    from app.recon.bbnt_job import signed_contracts
+    rows = parse_contracts([
+        ["GROUP BRAND", "BRAND", "Email", "STATUS", "SỐ HỢP ĐỒNG", "PHÁP NHÂN B\n(EZ/SS)"],
+        ["WELLHOME", "TEFAL", "", "Đã ký", "01082025/TEFAL-EZS-FB", "EZS"],
+        ["WELLHOME", "BOSCH", "", "Đã ký", "28112025/BOSCH-EZS-FB", "EZS"],
+        ["BRANDPARTNER", "BERGHOFF\r\nNACHTMANN\r\nFISSLER ", "", "Đã ký", "012026/BRANDPARTNER-EZS-FB", "EZS"],
+        ["DKSH", "URIGAE", "", "Đã ký", "01082024/DKSH-EZ-FB", "EZS"],
+        ["DKSH", "AVENE"],                                          # dòng thiếu số HĐ -> dùng HĐ theo group
+        ["LDB", "CERAVE", "", "Chưa ký"],
+    ])
+    find = lambda brands, group=None: signed_contracts(rows, brand_codes=brands, group_code=group, entity="EZS")  # noqa: E731
+    assert find(["TEFAL"], "WELLHOME") == ["01082025/TEFAL-EZS-FB"]
+    assert find(["NACHTMANN"], "BRANDPARTNER") == ["012026/BRANDPARTNER-EZS-FB"]
+    assert find(["AVENE"], "DKSH") == ["01082024/DKSH-EZ-FB"]
+    assert find(["CERAVE"], "LDB") == []
+    assert find(["TEFAL", "BOSCH"], "WELLHOME") == ["01082025/TEFAL-EZS-FB", "28112025/BOSCH-EZS-FB"]

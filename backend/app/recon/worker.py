@@ -33,7 +33,7 @@ from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key, parse_rows, row_key
-from app.recon.rules import CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
+from app.recon.rules import SCOPE_FROM, CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
 from app.services.sheets import OrderWorkbook, SheetAccessError, parse_sheet_url
 from app.services.templates import TemplateRegistry
@@ -120,7 +120,7 @@ def cell_plans(rows: Sequence[FbjtRow], r: BbntResult) -> tuple[list[CellPlan], 
 def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink], contracts: Sequence[ContractRow],
                master: MasterData, templates: TemplateRegistry, open_order: Callable[[str], OrderOpener], *,
                today: date, now: datetime, issued_at: Mapping[str, datetime] | None = None,
-               brand_op: Mapping[str, str] | None = None) -> list[CasePlan]:
+               brand_op: Mapping[str, str] | None = None, scope_from: date = SCOPE_FROM) -> list[CasePlan]:
     """``issued_at``: ``bbnt_issued_at`` đã lưu theo ``order_sheet_id`` — chạy lại (kể cả tháng khác) ra đúng
     số BBNT cũ. Case chưa có -> dùng ``now`` (lần lập đầu). ``brand_op``: DATA BRAND brand (chuẩn hoá) -> cột OP."""
     outcome = parse_rows(fbjt_values)
@@ -148,11 +148,22 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
     for row in outcome.rows:
         seen[row_key(row.brand, row.campaign)] = seen.get(row_key(row.brand, row.campaign), 0) + 1
     groups: dict[str, list[FbjtRow]] = {}
+    def campaign_month(row: FbjtRow) -> date | None:
+        m = re.search(r"(\d{2})/(\d{4})$", campaign_key(row.campaign))
+        return date(int(m[2]), int(m[1]), 1) if m else row.camp_end   # tên không có tháng -> dùng cột G
+
     for row in outcome.rows:
         key = row_key(row.brand, row.campaign)
         sheets = index.get(key, {})
         h = normalize_text(row.op)
-        if h == "op":                               # phạm vi bot: chỉ cột H = "NON OP"
+        month = campaign_month(row)
+        if month is not None and month < scope_from:     # trước 08/2026: nghiệm thu tay, bot bỏ qua
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
+                                  ["BEFORE_SCOPE"]))
+        elif month is None:      # tên không có tháng + G trống: G chỉ nhập từ 08/2026 -> coi là trước phạm vi
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
+                                  ["BEFORE_SCOPE"], hints=["Tên campaign không có 'MM/YYYY' và cột G trống"]))
+        elif h == "op":                               # phạm vi bot: chỉ cột H = "NON OP"
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
                                   ["NOT_FB_NON_OP"]))
         elif not row.is_non_op:                     # H trống / giá trị lạ -> không tự bỏ, chờ duyệt
@@ -170,8 +181,8 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             code = "LINK_INVALID" if key in bad_links else "LINK_NOT_FOUND" if not sheets else "LINK_AMBIGUOUS"
             pl = CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP, [code])
             if code == "LINK_NOT_FOUND":
-                month = key[1][-7:] if re.search(r"\d{2}/\d{4}$", key[1]) else ""
-                near = sorted(c for c in camps_of.get(key[0], set()) if campaign_key(c).endswith(month))
+                mmyyyy = key[1][-7:] if re.search(r"\d{2}/\d{4}$", key[1]) else ""
+                near = sorted(c for c in camps_of.get(key[0], set()) if campaign_key(c).endswith(mmyyyy))
                 pl.hints.append("NON OP cùng brand, cùng tháng: " + (", ".join(near[:3]) if near
                                                                      else "không có (brand chưa có link tháng này)"))
             plans.append(pl)
@@ -281,7 +292,7 @@ def summary(plans: Sequence[CasePlan]) -> list[str]:
             + [f"  {r}: {n}" for r, n in sorted(reasons.items())])
 
 
-def _live(today: date, now: datetime) -> list[CasePlan]:
+def _live(today: date, now: datetime, scope_from: date) -> list[CasePlan]:
     from app.master.repository import build_master, google_sheet_source
     from app.recon.google_bot import (
         BotEnv,
@@ -308,7 +319,7 @@ def _live(today: date, now: datetime) -> list[CasePlan]:
                       parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")),
                       build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))()),
                       TemplateRegistry(DEFAULT_TEMPLATES_DIR), open_order, today=today, now=now,
-                      brand_op=parse_brand_op(reader.read(fbjt, sheet_name="DATA BRAND")))
+                      brand_op=parse_brand_op(reader.read(fbjt, sheet_name="DATA BRAND")), scope_from=scope_from)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -321,6 +332,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     src.add_argument("--live", action="store_true", help="Đọc Google thật bằng token nền (biến RECON_*), chỉ đọc")
     p.add_argument("--master-file")
     p.add_argument("--today", type=date.fromisoformat, default=None)
+    p.add_argument("--scope-from", type=date.fromisoformat, default=SCOPE_FROM,
+                   help=f"Chỉ xét campaign từ tháng này (mặc định {SCOPE_FROM:%m/%Y})")
     p.add_argument("--summary", action="store_true", help="Chỉ in số đếm (cho log CI); chi tiết ghi vào --out")
     p.add_argument("--out", type=Path, help="Ghi báo cáo chi tiết vào file")
     a = p.parse_args(argv)
@@ -330,7 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from app.recon.google_bot import BotConfigError
 
         try:
-            plans = _live(today, now)
+            plans = _live(today, now, a.scope_from)
         except Exception as exc:  # noqa: BLE001 — log CI: không in chi tiết có thể chứa dữ liệu brand
             print(f"LỖI {type(exc).__name__}: {exc if isinstance(exc, BotConfigError) else '(chi tiết ẩn)'}",
                   file=sys.stderr)
@@ -342,7 +355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         plans = plan_cases(data["fbjt"], [OrderLink(**x) for x in data["links"]],
                            [ContractRow(**x) for x in data.get("contracts", [])],
                            build_master(xlsx_source(a.master_file)()), TemplateRegistry(DEFAULT_TEMPLATES_DIR),
-                           _fixture_opener(data.get("orders", {})), today=today, now=now)
+                           _fixture_opener(data.get("orders", {})), today=today, now=now, scope_from=a.scope_from)
     detail = _report(plans)
     if a.out:
         a.out.write_text("\n".join(detail) + "\n", encoding="utf-8")

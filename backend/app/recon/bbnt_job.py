@@ -15,6 +15,7 @@ from datetime import datetime
 from app.core.calculation import normalize_text
 from app.errors import BbntError
 from app.master.models import MasterData
+from app.recon.fbjt import brand_key
 from app.recon.rules import campaign_program_name, campaign_suffix
 from app.services.generator import BbntGenerator, BbntInput, BbntResult, OrderOpener
 from app.services.sheets import SheetAccessError
@@ -33,17 +34,21 @@ class ContractRow:
     entity_b: str
     channel: str
     status: str
+    level: str = "brand"         # "brand": dòng theo cột BRAND; "group": theo cột GROUP BRAND
 
 
 def signed_contracts(rows: Iterable[ContractRow], *, brand_codes: Sequence[str], group_code: str | None,
                      entity: str) -> list[str]:
-    """Số hợp đồng ``Đã ký`` khớp (brand hoặc group) + pháp nhân B + kênh FB. Audit Gate cần đúng 1."""
-    keys = {normalize_text(b) for b in brand_codes} | ({normalize_text(group_code)} if group_code else set())
-    return sorted({
-        r.contract_no.strip() for r in rows
-        if r.contract_no.strip() and normalize_text(r.status) == _SIGNED and normalize_text(r.brand) in keys
-        and normalize_text(r.entity_b) == normalize_text(entity) and normalize_text(r.channel) == "fb"
-    })
+    """Số hợp đồng ``Đã ký`` + pháp nhân B + kênh FB. Từng brand: HĐ ghi theo BRAND nếu có, không có mới lấy HĐ
+    theo GROUP (vd TEFAL có HĐ riêng dù group WELLHOME còn HĐ BOSCH). Gộp các brand; Audit Gate cần đúng 1."""
+    ok = [r for r in rows if r.contract_no.strip() and normalize_text(r.status) == _SIGNED
+          and normalize_text(r.entity_b) == normalize_text(entity) and normalize_text(r.channel) == "fb"]
+    by_group = {r.contract_no.strip() for r in ok if group_code and brand_key(r.brand) == brand_key(group_code)}
+    hits: set[str] = set()
+    for b in brand_codes:
+        own = {r.contract_no.strip() for r in ok if r.level == "brand" and brand_key(r.brand) == brand_key(b)}
+        hits |= own or by_group
+    return sorted(hits)
 
 
 @dataclass(frozen=True)
