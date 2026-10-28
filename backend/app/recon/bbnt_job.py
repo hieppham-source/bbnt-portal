@@ -17,6 +17,7 @@ from app.errors import BbntError
 from app.master.models import MasterData
 from app.recon.rules import campaign_program_name, campaign_suffix
 from app.services.generator import BbntGenerator, BbntInput, BbntResult, OrderOpener
+from app.services.sheets import SheetAccessError
 from app.services.templates import TemplateRegistry
 
 CHANNEL = "FB"
@@ -88,4 +89,6 @@ def make_bbnt(templates: TemplateRegistry, master: MasterData, case: CaseBbnt, o
         r = BbntGenerator(templates, clock=lambda: issued_at).run(master, inp, open_order, render=render)
     except BbntError as exc:
         return BbntOutcome(None, (exc.code,))
+    except SheetAccessError:
+        return BbntOutcome(None, ("ORDER_SHEET_UNREADABLE",))
     return BbntOutcome(r, (), hashlib.sha256(r.content).hexdigest() if r.content is not None else None)

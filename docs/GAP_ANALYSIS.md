@@ -54,3 +54,8 @@ Không có chức năng recon nào đang **chạy** ở production: chưa có `D
 | M6 | "Ngày gửi nghiệm thu của link nhiều dòng = ngày kết thúc muộn nhất + 25" là giả định, chưa có trong ARCHITECTURE | `backend/app/recon/worker.py:162` | Xác nhận rồi ghi vào ARCHITECTURE |
 | M7 | README "Không database" | `README.md:2` | Đã sửa: portal không DB; module recon dùng Postgres |
 | M8 | ARCHITECTURE F8 (repo public) vs SECURITY (đã private) | `ARCHITECTURE.md:23`; `SECURITY.md:3` | F8 đã được thay bằng 10.1; phiên 28/10 clone được qua proxy của phiên nên **không kiểm chứng lại** được — anh xác nhận trên GitHub Settings |
+
+## 4. Cập nhật 28/10 (sau PR #5)
+
+- M1 đã xử lý: worker kiểm `DATA BRAND.OP` khi chạy `--live`.
+- Bot đọc Google thật (chỉ đọc) qua workflow `recon-dry-run`; chưa ghi Sheet, chưa DB, chưa email.

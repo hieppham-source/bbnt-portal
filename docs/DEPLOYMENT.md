@@ -21,6 +21,7 @@
 | Chế độ | Lệnh | Cần | Trạng thái |
 |---|---|---|---|
 | `dry-run` | `python -m app.recon.worker dry-run --fixture <json> --master-file <xlsx>` | Không cần DB/token; không ghi gì | Có (PR #5) |
+| `dry-run --live` | Workflow `recon-dry-run` (chạy tay trên GitHub Actions) | Secrets `RECON_GOOGLE_*`; Variables `RECON_FBJT_ID`, `RECON_ORDER_LINKS_ID`, `MASTER_SHEET_URL`. Chỉ đọc Google | Có |
 | `run-once` | — | `DATABASE_URL`, `RECON_GOOGLE_*`, duyệt `RECON_STATE_PROPOSAL.md` | **Chưa có code** |
 
 Credential nền: worker **không** dùng token Google của nhân viên đăng nhập portal. Chỉ dùng refresh token của hộp
@@ -32,6 +33,17 @@ Triển khai `run-once` (khi có code), theo thứ tự: (1) `dry-run` trên b�
 
 Rollback: tắt workflow lịch + đặt cả hai cờ `off` (xem `OPERATIONS_RUNBOOK.md`); revert PR trên `main`
 (Render tự deploy lại khi CI xanh); frontend: `git checkout --detach <commit cũ>` trong worktree deploy rồi `deploy.cmd`.
+
+### GitHub Variables cho `recon-dry-run` (không phải secret — chỉ là ID file)
+
+| Tên | Giá trị |
+|---|---|
+| `RECON_FBJT_ID` | ID file FB.JT (đoạn giữa `/d/` và `/edit`) |
+| `RECON_ORDER_LINKS_ID` | ID file `[NEW] Các order link gửi brand` |
+| `MASTER_SHEET_URL` | Link Sheet master portal (giống env Render) |
+
+Hộp thư của token phải xem được 3 file này và các file order. Log chỉ in số đếm; báo cáo chi tiết là artifact giữ 1 ngày
+khi chọn `report=true`. Lỗi bất ngờ chỉ in tên lỗi (ẩn chi tiết).
 
 ## Migration
 
