@@ -146,6 +146,9 @@ class BbntInput:
     #: ràng là chưa điền (hoa hồng/VAT tính ra = 0) — người làm PHẢI tự sửa tay trên file .docx đã tải trước khi
     #: dùng để thanh toán. Xem :func:`_manual_contract`.
     manual_contract: bool = False
+    #: Tên chương trình ghi NGUYÊN VĂN trên BBNT (bot đối soát, vd "MIX 0726"). None = cách portal: tên chương
+    #: trình + đuôi (:func:`app.services.bbnt_document.program_name`).
+    program_override: str | None = None
 
 
 #: ``BbntInput.manual_contract`` — mọi giá trị Bên A để placeholder RÕ RÀNG là chưa điền (không phải chuỗi
@@ -384,7 +387,7 @@ class BbntGenerator:
                                           consulting_fee=inp.consulting_fee, quantum=VND)
 
         # 4-5. số + render
-        program = program_name(inp.campaign_name, number)
+        program = inp.program_override or program_name(inp.campaign_name, number)
         values, item_rows, brand_blocks = build_render_context(
             number=number, program=program, contract_no=contract.contract_no,
             contract_signed_on=contract.signed_on or contract.valid_from,

@@ -15,7 +15,7 @@ from datetime import datetime
 from app.core.calculation import normalize_text
 from app.errors import BbntError
 from app.master.models import MasterData
-from app.recon.rules import campaign_suffix
+from app.recon.rules import campaign_program_name, campaign_suffix
 from app.services.generator import BbntGenerator, BbntInput, BbntResult, OrderOpener
 from app.services.templates import TemplateRegistry
 
@@ -58,9 +58,10 @@ def build_input(case: CaseBbnt) -> BbntInput:
     brands = sorted({b.strip().upper() for b in case.brand_codes if b.strip()})
     if not brands:
         raise ValueError("Case không có brand")
+    program = campaign_program_name(case.campaign)
     return BbntInput(channel=CHANNEL, entity=case.entity, bbnt_suffix=campaign_suffix(case.campaign),
-                     campaign_name=case.campaign, contract_no=case.contract_no, brand_codes=brands,
-                     breakdown_mode="brand" if len(brands) > 1 else None)
+                     campaign_name=program, program_override=program, contract_no=case.contract_no,
+                     brand_codes=brands, breakdown_mode="brand" if len(brands) > 1 else None)
 
 
 @dataclass(frozen=True)

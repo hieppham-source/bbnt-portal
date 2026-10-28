@@ -37,7 +37,8 @@ def test_signed_contracts_match_brand_or_group_entity_channel_and_status():
 
 def test_build_input_single_brand_and_group():
     one = build_input(ORGANICA)
-    assert (one.bbnt_suffix, one.brand_codes, one.breakdown_mode) == ("BDAY.0526", ["ORGANICA"], None)
+    assert (one.bbnt_suffix, one.campaign_name, one.brand_codes, one.breakdown_mode) == (
+        "BDAY.0526", "BDAY 0526", ["ORGANICA"], None)
     group = build_input(CaseBbnt("SASSY", ["shiseido", "ANESSA"], "Mix Derma - 07/2026", "x"))
     assert (group.bbnt_suffix, group.brand_codes, group.breakdown_mode) == ("MD.0726", ["ANESSA", "SHISEIDO"],
                                                                              "brand")
@@ -52,6 +53,7 @@ def test_make_bbnt_is_reproducible_with_stored_issued_at(ctx):
     for out in runs:
         assert out.reasons == () and out.result is not None and out.contract_in_portal_master
         assert str(out.result.number) == "06.26/BBNT-ORGANICA-EZ-FB-BDAY.0526"
+        assert out.result.program == "BDAY 0526"              # không ghép thêm đuôi BBNT như portal
         assert out.sha256 and len(out.sha256) == 64
     assert runs[0].result.commission.total_payable == runs[1].result.commission.total_payable
 

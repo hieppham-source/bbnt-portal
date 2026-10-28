@@ -1,7 +1,7 @@
 """
 Quy tắc nghiệp vụ đã chốt (docs/ARCHITECTURE.md mục 11–16). Toàn bộ là hàm thuần — không I/O.
 
-* Đuôi số BBNT từ tên campaign (12.3)
+* Đuôi số BBNT + tên chương trình từ tên campaign (12.3)
 * Đọc số + ngày hoá đơn chính thức trong ghi chú HĐ (11.3)
 * Lịch ngày làm việc T2–T6 trừ ngày lễ đã duyệt (12.2, 13.3)
 * Mốc gửi email nghiệm thu, hạn thanh toán, phạt chậm ước tính (12.2, 13.4)
@@ -36,6 +36,17 @@ VND = Decimal(1)
 _CAMPAIGN_RE = re.compile(r"^\s*(?P<name>.+?)\s*-\s*(?P<month>\d{1,2})\s*/\s*(?P<year>\d{4})\s*$")
 
 
+def _parse_campaign(campaign: str) -> tuple[list[str], str]:
+    """``'<tên> - MM/YYYY'`` -> (các chữ của tên, ``'MMYY'``). Sai dạng -> ``ValueError``."""
+    m = _CAMPAIGN_RE.match(campaign or "")
+    if not m:
+        raise ValueError(f"Tên campaign không đúng dạng '<tên> - MM/YYYY': {campaign!r}")
+    month = int(m["month"])
+    if not 1 <= month <= 12:
+        raise ValueError(f"Tháng không hợp lệ trong campaign: {campaign!r}")
+    return m["name"].upper().split(), f"{month:02d}{m['year'][2:]}"
+
+
 def campaign_suffix(campaign: str) -> str:
     """``'<tên> - MM/YYYY'`` -> ``'<mã>.<MM><YY>'``. Tên 1 chữ giữ nguyên (in hoa); từ 2 chữ -> chữ cái đầu
     của 2 chữ đầu. Sai dạng -> ``ValueError`` (bot chuyển KAM, không đoán).
@@ -45,15 +56,21 @@ def campaign_suffix(campaign: str) -> str:
     >>> campaign_suffix("Mix Derma - 07/2026")
     'MD.0726'
     """
-    m = _CAMPAIGN_RE.match(campaign or "")
-    if not m:
-        raise ValueError(f"Tên campaign không đúng dạng '<tên> - MM/YYYY': {campaign!r}")
-    month = int(m["month"])
-    if not 1 <= month <= 12:
-        raise ValueError(f"Tháng không hợp lệ trong campaign: {campaign!r}")
-    words = m["name"].split()
+    words, mmyy = _parse_campaign(campaign)
     code = words[0] if len(words) == 1 else words[0][0] + words[1][0]
-    return f"{code.upper()}.{month:02d}{m['year'][2:]}"
+    return f"{code}.{mmyy}"
+
+
+def campaign_program_name(campaign: str) -> str:
+    """Tên chương trình ghi trên BBNT: ``'<TÊN> <MMYY>'`` (anh Hiệp chốt 28/10/2026).
+
+    >>> campaign_program_name("MIX - 07/2026")
+    'MIX 0726'
+    >>> campaign_program_name("Mix  Derma - 7/2026")
+    'MIX DERMA 0726'
+    """
+    words, mmyy = _parse_campaign(campaign)
+    return f"{' '.join(words)} {mmyy}"
 
 
 # =============================================================================
