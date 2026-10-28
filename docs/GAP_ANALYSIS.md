@@ -27,13 +27,13 @@ Không có chức năng recon nào đang **chạy** ở production: chưa có `D
 | Yêu cầu | Hiện có | Thiếu | Chặn bởi |
 |---|---|---|---|
 | NMV chỉ `Đã giao`; Hoàn/Hủy loại | Có (`calculation.py`) | — | — |
-| Status lạ | Loại khỏi NMV + cảnh báo (WARNING); worker in số dòng | Có chặn tự phát hành hay không | **Q9** |
-| EZS VAT 8%, Sassy khấu trừ 1% | Có, theo `PHAP_NHAN` hiệu lực tới 31/12/2026; test K của worker | Dòng thuế 2027 | Q10 (sau 31/12/2026 mọi BBNT mới → `TAX_RULE_MISSING` → REVIEW) |
+| Status lạ | Loại khỏi NMV + cảnh báo, không chặn; NMV tính thêm hoàn thành / đã xong / confirm (portal + bot) | — | Q9 đã chốt |
+| EZS VAT 8%, Sassy khấu trừ 1% | Có, theo `PHAP_NHAN` hiệu lực tới 31/12/2026; test K của worker | Dòng thuế 2027 | Q10: giữ nguyên; từ 01/01/2027 BBNT mới → REVIEW |
 | Facebook | Có (template EZS/Sassy FB Non-OP) | — | — |
-| TikTok Shop | Số BBNT hỗ trợ `TTS`; registry cho phép template theo kênh | Template TTS, mapping TTS, nguồn theo dõi TTS (FB.JT chỉ FB), worker hard-code `FB` | Q11 |
+| TikTok Shop | Số BBNT hỗ trợ `TTS` (portal) | Bot TTS | Q11: tạm bỏ |
 | Brand / group | Có (1 link = 1 BBNT, group tách bảng brand, chia K dồn vào NMV lớn nhất) | Đọc `DATA BRAND` thật | Token |
 | OP / non-OP | FB.JT `OP` + mô hình hợp đồng master → REVIEW | `DATA BRAND.OP` (ARCHITECTURE 11.2-1) | Token |
-| Kỳ nghiệm thu | Generator tính **toàn bộ** dòng của link (không lọc kỳ) | Không kiểm hiệu lực hợp đồng theo ngày | Q12 |
+| Kỳ nghiệm thu / hiệu lực HĐ | Generator tính toàn bộ dòng của link; bot kiểm hợp đồng hiệu lực tại ngày lập BBNT | — | Q12 đã chốt |
 | Hợp đồng | Đúng 1 dòng `Đã ký` + FB + pháp nhân + có trong master portal | — | — |
 | Số BBNT | Ổn định khi truyền `issued_at` đã lưu; `bbnt_number` UNIQUE | Lưu `issued_at` (cần DB thật) | `DATABASE_URL` |
 | Không phát hành khi lỗi | Mọi lý do → REVIEW; dry-run không ghi | Audit Gate email (template, loopmail…) chưa nối vào worker | Q1, token |
@@ -47,10 +47,10 @@ Không có chức năng recon nào đang **chạy** ở production: chưa có `D
 | # | Mâu thuẫn | Vị trí | Đề xuất |
 |---|---|---|---|
 | M1 | Kiến trúc yêu cầu `DATA BRAND.OP` trống; worker chỉ xét FB.JT `OP` (+ mô hình hợp đồng master) | `ARCHITECTURE.md:438`, `:546`; `backend/app/recon/worker.py:174` | Thêm khi đọc DATA BRAND thật (cần token); đến lúc đó run-once không được bật |
-| M2 | Status lạ chỉ là WARNING (không chặn) trong khi bot tự gửi | `backend/app/core/calculation.py:73`; Audit Gate chỉ đếm ERROR (`ARCHITECTURE.md` 11.2-4) | Q9: đề xuất bot coi `UNKNOWN_STATUS` > 0 là REVIEW; portal giữ nguyên |
-| M3 | Hiệu lực hợp đồng không được kiểm (`find_contract` cố ý bỏ) — yêu cầu "kỳ nghiệm thu đúng quy tắc" | `backend/app/master/index.py:80` | Q12: bot thêm điều kiện ngày kết thúc camp ∈ [hiệu lực từ, đến] → REVIEW nếu ngoài |
+| M2 | ~~Status lạ không chặn~~ — **đã chốt Q9**: không chặn, thêm status tính NMV | `backend/app/core/calculation.py:124` | Đã làm |
+| M3 | ~~Hiệu lực hợp đồng không được kiểm~~ — **đã chốt Q12** (bot, theo ngày lập BBNT; portal giữ nguyên) | `backend/app/recon/worker.py:196` | Đã làm |
 | M4 | Tài liệu ghi `python -m app.worker`; code là `python -m app.recon.worker` | `ARCHITECTURE.md:123,136,187,515` | Đã ghi chú ở ARCHITECTURE 17 (giữ nguyên lịch sử các mục cũ) |
-| M5 | Thuế mặc định + mẫu `PHAP_NHAN` hết hiệu lực 31/12/2026 | `backend/app/core/calculation.py:746-749`; `deploy/MASTER_BBNT_TEMPLATE.xlsx` | Q10: kế toán thêm dòng thuế 2027 vào Sheet master trước 01/01/2027 |
+| M5 | Thuế hết hiệu lực 31/12/2026 — **Q10: giữ nguyên** | `backend/app/core/calculation.py:749-752` | Không đổi |
 | M6 | "Ngày gửi nghiệm thu của link nhiều dòng = ngày kết thúc muộn nhất + 25" là giả định, chưa có trong ARCHITECTURE | `backend/app/recon/worker.py:162` | Xác nhận rồi ghi vào ARCHITECTURE |
 | M7 | README "Không database" | `README.md:2` | Đã sửa: portal không DB; module recon dùng Postgres |
 | M8 | ARCHITECTURE F8 (repo public) vs SECURITY (đã private) | `ARCHITECTURE.md:23`; `SECURITY.md:3` | F8 đã được thay bằng 10.1; phiên 28/10 clone được qua proxy của phiên nên **không kiểm chứng lại** được — anh xác nhận trên GitHub Settings |

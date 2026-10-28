@@ -193,6 +193,9 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
                 plan.warnings[w.code.value] = plan.warnings.get(w.code.value, 0) + 1
         if out.result.contract.model != "NON_OP":      # chỉ FB Non-OP (11.2-1); dry-run không render template
             plan.reasons.append("CONTRACT_MODEL_OP")
+        c, issued_on = out.result.contract, out.result.number.issue_date  # Q12: hiệu lực theo ngày lập BBNT
+        if issued_on is None or issued_on < c.valid_from or (c.valid_to is not None and issued_on > c.valid_to):
+            plan.reasons.append("CONTRACT_NOT_VALID_ON_BBNT_DATE")
         plan.cells, problems = cell_plans(rows, out.result)
         plan.reasons.extend(problems)
         if any(c.action is CellAction.REVIEW for c in plan.cells):

@@ -31,3 +31,4 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 - 28/10/2026 — PR #3 merged. Branch `feat/recon-bbnt-adapter`: adapter BBNT cho bot.
 - 28/10/2026 — PR #4 merged. Branch `feat/recon-worker-dry-run`: worker dry-run.
 - 28/10/2026 — PR #5 thêm commit hardening + `GAP_ANALYSIS.md`, `RECON_STATE_PROPOSAL.md`. pytest 584 passed, 1 skipped (có Postgres 16 local); ruff, mypy strict OK.
+- 28/10/2026 — Q9 (thêm status tính NMV, portal + bot) và Q12 (hợp đồng hiệu lực theo ngày lập BBNT, bot). pytest 596 passed, 1 skipped.

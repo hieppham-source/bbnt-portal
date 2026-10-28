@@ -186,12 +186,14 @@ def test_nmv_only_delivered_and_excluded_statuses_are_reported(run):
         ["04/05/2026", "X2", "Hoàn hàng", "Organica", "ORG-01", "Serum", 1, 500_000],
         ["05/05/2026", "X3", "Đã hủy", "Organica", "ORG-01", "Serum", 1, 2_000_000],
         ["06/05/2026", "X4", "Đang giao", "Organica", "ORG-01", "Serum", 1, 3_000_000],   # status lạ
+        ["07/05/2026", "X5", "Hoàn thành", "Organica", "ORG-01", "Serum", 1, 100_000],     # Q9: tính NMV
+        ["08/05/2026", "X6", "Confirmed", "Organica", "ORG-01", "Serum", 1, 10_000],       # Q9: tính NMV
     ])}
     [p] = run(row(*ORG), links=[OrderLink("ORGANICA", "BDAY - 05/2026", url)], orders=orders)
     cells = {c.column: c.target for c in p.cells}
-    assert cells["nmv"] == 1_000_000 and cells["gmv"] == 6_500_000
+    assert cells["nmv"] == 1_110_000 and cells["gmv"] == 6_610_000
     assert p.warnings == {"RETURNED": 1, "CANCELLED": 1, "UNKNOWN_STATUS": 1}
-    # Hiện tại status lạ bị LOẠI khỏi NMV và chỉ cảnh báo (không chặn) — chờ quyết định Q9.
+    # Status lạ bị LOẠI khỏi NMV và chỉ cảnh báo, không chặn (Q9 chốt 28/10/2026).
     assert p.action is Action.DRAFT
 
 
@@ -238,3 +240,19 @@ def test_representative_fixture_covers_all_actions(capsys):
     out = capsys.readouterr().out
     tags = [line.split("]")[0] + "]" for line in out.splitlines() if line.startswith("[")]
     assert sorted(set(tags)) == ["[DRAFT]", "[REVIEW]", "[SKIP]", "[WAIT]"], out
+
+
+@pytest.mark.parametrize("valid_from, valid_to, ok", [
+    (datetime(2026, 1, 1), datetime(2026, 10, 28), True),     # ngày lập BBNT = ngày cuối hiệu lực
+    (datetime(2026, 1, 1), datetime(2026, 9, 30), False),     # hết hạn trước ngày lập
+    (datetime(2026, 11, 1), None, False),                     # chưa hiệu lực
+])
+def test_contract_must_be_valid_on_bbnt_date(run, master_tables, valid_from, valid_to, ok):
+    hd = master_tables["HOP_DONG"]
+    i_from, i_to = hd[0].index("Hiệu lực từ"), hd[0].index("Hiệu lực đến")
+    for r in hd[1:]:
+        if r[0] == "01/2026/HĐDV/EZS-ORGANICA":
+            r[i_from], r[i_to] = valid_from, valid_to
+    [p] = run(row(*ORG), master_=MasterRepository(lambda: master_tables).get())
+    assert (p.action is Action.DRAFT) is ok
+    assert ("CONTRACT_NOT_VALID_ON_BBNT_DATE" in p.reasons) is not ok

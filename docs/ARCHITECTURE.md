@@ -883,3 +883,4 @@ Làm rõ 15.2: đơn vị gửi nhắc là **1 loopmail**, không phải 1 brand
 - Định danh case trong worker = **spreadsheet id** của link order (khớp `recon_case.order_sheet_id`), không phải chuỗi URL.
 - Link phủ (BRAND, CAMP) nào thì FB.JT phải có đủ các dòng đó; thiếu dòng (Done/lỗi/không có) → REVIEW, không lập BBNT một phần.
 - Trạng thái bền vững, idempotency, ghi Sheet có kiểm soát: `docs/RECON_STATE_PROPOSAL.md` (**chờ duyệt**, chưa triển khai).
+- Chốt 28/10/2026 (OPEN_QUESTIONS Q9–Q12): NMV tính cả status hoàn thành / đã xong / confirm (portal + bot); thuế 2027 giữ nguyên cấu hình; bot chưa làm TikTok Shop; bot kiểm hiệu lực hợp đồng theo ngày lập BBNT.

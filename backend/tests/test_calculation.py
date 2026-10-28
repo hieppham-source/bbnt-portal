@@ -81,6 +81,11 @@ class TestStatus:
     def test_delivered_variants(self, raw):
         assert self.clf.classify(raw) is OrderStatus.DELIVERED
 
+    @pytest.mark.parametrize("raw", ["Hoàn thành", "Đã hoàn thành", "FINISHED", "Completed", "Đã xong", "Done",
+                                     "Confirm", "confirmed", "Đã xác nhận"])
+    def test_delivered_q9_finish_done_confirm(self, raw):
+        assert self.clf.classify(raw) is OrderStatus.DELIVERED
+
     @pytest.mark.parametrize("raw", ["Hủy đơn", "Huỷ đơn", "HỦY ĐƠN", "Đã hủy", "Đã huỷ"])
     def test_cancel_tone_mark_position(self, raw):
         # 'Hủy' (dấu trên u) và 'Huỷ' (dấu trên y) là 2 chuỗi Unicode khác nhau
