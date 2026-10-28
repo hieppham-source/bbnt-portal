@@ -27,6 +27,7 @@ def run_file(name: str) -> None:
 def fresh_db() -> None:
     assert psql("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").returncode == 0
     run_file("0001_recon_init.up.sql")
+    run_file("0002_recon_idempotency.up.sql")
 
 
 CASE = ("INSERT INTO recon_case (id, order_sheet_id, order_sheet_url, brand_codes, campaign, state) VALUES "
@@ -72,3 +73,24 @@ def test_failed_up_leaves_nothing_behind() -> None:
                         str(MIGRATIONS / "0001_recon_init.up.sql")], capture_output=True, text=True, check=False)
     assert r.returncode != 0                                    # bảng holiday đã tồn tại -> lỗi giữa chừng
     assert psql("SELECT to_regclass('public.recon_case');").stdout.strip() == ""   # transaction đã rollback
+
+
+SHEET_ROW = ("INSERT INTO sheet_row (id, tab, brand_key, campaign_key, case_id) VALUES "
+             "(1, 'FB-2026', 'aestura', 'mix - 07/2026', '00000000-0000-0000-0000-000000000001');")
+WRITE = ("INSERT INTO sheet_write (case_id, sheet_row_id, column_name, target_value, status) VALUES "
+         "('00000000-0000-0000-0000-000000000001', 1, 'nmv', 1000, 'PLANNED');")
+
+
+def test_0002_sheet_write_is_idempotent_per_target(fresh_db: None) -> None:
+    assert psql(CASE + SHEET_ROW + WRITE).returncode == 0
+    dup = psql(WRITE)
+    assert dup.returncode != 0 and "duplicate key" in dup.stderr
+    assert psql("SELECT review_reasons FROM recon_case;").stdout.strip() == "{}"
+
+
+def test_0002_down_then_up(fresh_db: None) -> None:
+    run_file("0002_recon_idempotency.down.sql")
+    assert psql("SELECT to_regclass('sheet_write');").stdout.strip() == ""
+    assert psql("SELECT 1 FROM recon_case;").returncode == 0      # 0001 còn nguyên
+    run_file("0002_recon_idempotency.up.sql")
+    assert psql("SELECT to_regclass('sheet_write');").stdout.strip() == "sheet_write"

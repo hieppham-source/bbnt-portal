@@ -873,3 +873,15 @@ Làm rõ 15.2: đơn vị gửi nhắc là **1 loopmail**, không phải 1 brand
 - Bot đọc `REMINDER LOG` (kể cả dòng do skill/người ghi) để lấy ngày nhắc gần nhất theo Thread ID → không nhắc trùng với lần anh vừa gửi tay.
 - Khi bật tự gửi nhắc thanh toán (Phase 4), **ngừng chạy skill cho bước S5** để tránh 2 nơi cùng gửi. Skill vẫn dùng được để soạn nháp các bước khác cho tới khi bot đảm nhận.
 - Các case đang **Giữ** trong `claude/reminder-status.md` (CETAPHIL, DKSH, HSVG) được nhập sẵn trạng thái Giữ vào portal khi khởi tạo.
+
+---
+
+## 17. Hiện trạng code và đề xuất tiếp theo (28/10/2026)
+
+- Hiện trạng merge / PR / chỉ tài liệu, gap và mâu thuẫn tài liệu ↔ code: `docs/GAP_ANALYSIS.md`.
+- Lệnh worker thực tế là `python -m app.recon.worker` (các chỗ ghi `python -m app.worker` ở trên là tên cũ).
+- Định danh case trong worker = **spreadsheet id** của link order (khớp `recon_case.order_sheet_id`), không phải chuỗi URL.
+- Link phủ (BRAND, CAMP) nào thì FB.JT phải có đủ các dòng đó; thiếu dòng (Done/lỗi/không có) → REVIEW, không lập BBNT một phần.
+- Trạng thái bền vững, idempotency, ghi Sheet có kiểm soát: `docs/RECON_STATE_PROPOSAL.md` (**chờ duyệt**, chưa triển khai).
+- Chốt 28/10/2026 (OPEN_QUESTIONS Q9–Q12): NMV tính cả status hoàn thành / đã xong / confirm (portal + bot); thuế 2027 giữ nguyên cấu hình; bot chưa làm TikTok Shop; bot kiểm hiệu lực hợp đồng theo ngày lập BBNT.
+- Chốt 28/10/2026 (Q13): duyệt `RECON_STATE_PROPOSAL.md` + migration `0002`. Bot được thêm cột vào file link tổng order (`NON OP {YY}`); FB.JT vẫn không thêm cột.

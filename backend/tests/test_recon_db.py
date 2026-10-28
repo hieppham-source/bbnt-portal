@@ -20,6 +20,7 @@ NEW = db.NewCase(order_sheet_id="sheet1", order_sheet_url="https://docs.google.c
 def conn() -> Iterator[psycopg.Connection]:
     assert psql("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").returncode == 0
     run_file("0001_recon_init.up.sql")
+    run_file("0002_recon_idempotency.up.sql")
     with psycopg.connect(URL or "", autocommit=True) as c:
         yield c
 

@@ -122,7 +122,10 @@ class OrderStatus(str, enum.Enum):
 
 #: Alias mặc định. Có thể override per-mapping qua ``reconciliation_mappings.options.status_aliases``.
 DEFAULT_STATUS_ALIASES: Mapping[OrderStatus, frozenset[str]] = {
-    OrderStatus.DELIVERED: frozenset({"Đã giao", "Đã giao hàng", "Giao thành công", "Giao hàng thành công"}),
+    # Hoàn thành / Đã xong / Confirm: anh Hiệp chốt 28/10/2026 (Q9), áp dụng cả portal và bot.
+    OrderStatus.DELIVERED: frozenset({"Đã giao", "Đã giao hàng", "Giao thành công", "Giao hàng thành công",
+                                      "Hoàn thành", "Đã hoàn thành", "Finish", "Finished", "Completed",
+                                      "Đã xong", "Done", "Confirm", "Confirmed", "Đã xác nhận"}),
     OrderStatus.RETURNED: frozenset({"Hoàn hàng", "Đã hoàn hàng", "Trả hàng", "Hoàn trả", "Đã hoàn"}),
     OrderStatus.CANCELLED: frozenset({"Hủy đơn", "Đã hủy", "Hủy", "Hủy đơn hàng", "Yêu cầu hủy", "Khách hủy"}),
 }
