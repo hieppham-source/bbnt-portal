@@ -21,3 +21,4 @@ Chỉ ghi điều **chưa chốt**. Quyết định đã chốt nằm ở `ARCHI
 | Q11 | Tạm bỏ TikTok Shop cho bot | Bot chỉ FB |
 | Q12 | Bot kiểm hiệu lực hợp đồng theo **ngày lập BBNT** | Worker: ngoài [Hiệu lực từ, Hiệu lực đến] của tab HOP_DONG → `CONTRACT_NOT_VALID_ON_BBNT_DATE` (REVIEW). Portal không đổi |
 | Q13 | Duyệt `RECON_STATE_PROPOSAL.md`: đồng ý cả 3 ý; bot được thêm cột vào file link tổng order, không thêm cột FB.JT | Migration `0002_recon_idempotency` + test |
+| — | Phạm vi Non-OP | Chốt 28/10: cột H = "NON OP" → xử lý; "OP" → bỏ; trống/khác → chờ duyệt; DATA BRAND.OP chỉ dùng để báo mâu thuẫn |

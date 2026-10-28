@@ -17,6 +17,7 @@ from typing import Any
 
 from app.core.calculation import normalize_text
 from app.recon.bbnt_job import ContractRow
+from app.recon.fbjt import brand_key
 from app.recon.rules import entity_code
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -104,7 +105,7 @@ def parse_contracts(values: Sequence[Sequence[Any]]) -> list[ContractRow]:
 def parse_brand_op(values: Sequence[Sequence[Any]]) -> dict[str, str]:
     """``DATA BRAND``: brand (chuẩn hoá) -> giá trị cột OP (trống = Non-OP)."""
     h, col = _header_index(values, ["brand", "op"])
-    return {normalize_text(_get(r, col["brand"])): _text(_get(r, col["op"]))
+    return {brand_key(_get(r, col["brand"])): _text(_get(r, col["op"]))
             for r in values[h + 1:] if _text(_get(r, col["brand"]))}
 
 

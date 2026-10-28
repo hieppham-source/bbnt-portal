@@ -145,7 +145,7 @@ def test_map_header_missing_or_duplicated() -> None:
 
 
 def test_parse_rows_skips_done_blank_and_bad_rows() -> None:
-    base = ["7", "AMORE", "AESTURA", "MIX - 07/2026", "", "Cty EZS", "30/7/26", "", "72,680,000", "", "17268768",
+    base = ["7", "AMORE", "AESTURA", "MIX - 07/2026", "", "Cty EZS", "30/7/26", "NON OP", "72,680,000", "", "17268768",
             "", 77090000, "THANH NHÃ", "", "AMORE X EZS - FB", "", "", "", "HĐ: 1334 (08/10/2026)"]
     out = parse_rows(_sheet(
         [*base, "Đã xuất hóa đơn + Chờ tiền", "", "", "", "Done"],
@@ -160,6 +160,11 @@ def test_parse_rows_skips_done_blank_and_bad_rows() -> None:
     assert r.status == "Đã xuất hóa đơn + Chờ tiền" and r.is_non_op and not r.is_done
     assert [i[0] for i in out.issues] == [10]
     assert row_key(" Aestura ", "MIX -  07/2026") == ("aestura", "mix - 07/2026")
+    assert row_key("BIA EFFECT", "MIX- 03/2026") == row_key("BiaEffect", "MIX - 3/2026") \
+        == ("biaeffect", "mix - 03/2026")
+    assert row_key("KIEHL'S", "HOMELIVING - 01.26")[1] == "homeliving - 01/2026"
+    assert row_key("A", "BDAY 2026")[1] == "bday 2026"
+    assert row_key("A", "MIX - 03/2026")[1] != row_key("A", "MIX - 03/2027")[1]
 
 
 def test_parse_rows_requires_header_row() -> None:
