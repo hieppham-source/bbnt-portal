@@ -155,7 +155,7 @@ def test_data_brand_op_blocks(master_tables, run):
     plans = worker.plan_cases(sheet(row(*ORG)), LINKS, CONTRACTS, MasterRepository(lambda: master_tables).get(),
                               TemplateRegistry(DEFAULT_TEMPLATES_DIR), worker._fixture_opener(ORDERS),
                               today=TODAY, now=NOW, brand_op={"organica": "OP"})
-    assert plans[0].reasons == ["NOT_FB_NON_OP"]
+    assert (plans[0].action, plans[0].reasons) == (Action.REVIEW, ["OP_CONFLICT_DATA_BRAND"])
 
 
 def test_unreadable_order_sheet_goes_to_review(run):

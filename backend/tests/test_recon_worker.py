@@ -269,3 +269,9 @@ def test_link_not_found_hints_same_brand_same_month(run):
     [p] = run(row(*ORG), links=links)
     assert p.reasons == ["LINK_NOT_FOUND"] and p.hints == ["NON OP cùng brand, cùng tháng: MIX FOOD - 05/2026"]
     assert "gợi ý: NON OP" in "\n".join(worker._report([p])) and "MIX FOOD" not in "\n".join(worker.summary([p]))
+
+
+@pytest.mark.parametrize("h", ["OP", "NON OP", "x"])
+def test_only_blank_column_h_is_non_op(run, h):
+    [p] = run(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS", op=h))
+    assert (p.action, p.reasons) == (Action.SKIP, ["NOT_FB_NON_OP"])

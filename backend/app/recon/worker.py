@@ -141,9 +141,8 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
     for link in links:
         camps_of.setdefault(row_key(link.brand, link.campaign)[0], set()).add(link.campaign.strip())
 
-    def is_op(row: FbjtRow) -> bool:      # FB.JT OP hoặc DATA BRAND.OP (11.2-1) -> ngoài phạm vi bot
-        return not row.is_non_op or normalize_text((brand_op or {}).get(brand_key(row.brand), "")) not in ("",
-                                                                                                         "non op")
+    def data_brand_op(row: FbjtRow) -> bool:
+        return normalize_text((brand_op or {}).get(brand_key(row.brand), "")) not in ("", "non op")
 
     seen: dict[tuple[str, str], int] = {}
     for row in outcome.rows:
@@ -152,9 +151,13 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
     for row in outcome.rows:
         key = row_key(row.brand, row.campaign)
         sheets = index.get(key, {})
-        if is_op(row):
+        if not row.is_non_op:                       # phạm vi bot: chỉ dòng có cột H (OP) trống
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
                                   ["NOT_FB_NON_OP"]))
+        elif data_brand_op(row):                    # H trống nhưng DATA BRAND ghi OP -> không đoán
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
+                                  ["OP_CONFLICT_DATA_BRAND"],
+                                  hints=[f"Cột H trống, DATA BRAND.OP = {(brand_op or {})[brand_key(row.brand)]!r}"]))
         elif seen[key] > 1:
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["FBJT_ROW_DUPLICATE"]))

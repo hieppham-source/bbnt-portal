@@ -43,7 +43,6 @@ FIRST_OF_DUPLICATES = frozenset({"status"})
 WRITABLE = ("nmv", "commission", "gmv")
 
 DONE_STATUSES = frozenset({normalize_text("Done"), normalize_text("Done trả tiền")})
-_NON_OP = frozenset({"", "non op"})
 
 
 class SchemaError(ValueError):
@@ -108,7 +107,7 @@ class FbjtRow:
 
     @property
     def is_non_op(self) -> bool:
-        return normalize_text(self.op) in _NON_OP
+        return not normalize_text(self.op)      # Non-OP = cột H (OP) để TRỐNG (anh Hiệp chốt 28/10/2026)
 
 
 @dataclass
