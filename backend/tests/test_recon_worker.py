@@ -26,7 +26,7 @@ LINKS = [OrderLink("Organica", "BDAY - 05/2026", ORDER_URL_FB),
 ORDERS = {ORDER_URL_FB: ORGANICA_MAY, ORDER_URL_SHISEIDO: SHISEIDO_Q3}
 
 
-def row(brand, campaign, end, entity, *, group="", op="", nmv=None, k=None, gmv=None):
+def row(brand, campaign, end, entity, *, group="", op="NON OP", nmv=None, k=None, gmv=None):
     r = [""] * len(HEADER)
     r[0], r[1], r[2], r[3], r[5], r[6], r[7] = "10/2026", group, brand, campaign, entity, end, op
     r[8], r[10], r[12] = nmv, k, gmv
@@ -271,7 +271,9 @@ def test_link_not_found_hints_same_brand_same_month(run):
     assert "gợi ý: NON OP" in "\n".join(worker._report([p])) and "MIX FOOD" not in "\n".join(worker.summary([p]))
 
 
-@pytest.mark.parametrize("h", ["OP", "NON OP", "x"])
-def test_only_blank_column_h_is_non_op(run, h):
+@pytest.mark.parametrize("h, action, reason", [
+    ("NON OP", Action.DRAFT, None), ("Non OP", Action.DRAFT, None), ("OP", Action.SKIP, "NOT_FB_NON_OP"),
+    ("", Action.REVIEW, "OP_COLUMN_BLANK"), ("x", Action.REVIEW, "OP_COLUMN_UNKNOWN")])
+def test_column_h_non_op_op_or_review(run, h, action, reason):
     [p] = run(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS", op=h))
-    assert (p.action, p.reasons) == (Action.SKIP, ["NOT_FB_NON_OP"])
+    assert p.action is action and p.reasons == ([reason] if reason else [])

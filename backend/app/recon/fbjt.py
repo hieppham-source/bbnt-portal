@@ -107,7 +107,7 @@ class FbjtRow:
 
     @property
     def is_non_op(self) -> bool:
-        return not normalize_text(self.op)      # Non-OP = cột H (OP) để TRỐNG (anh Hiệp chốt 28/10/2026)
+        return normalize_text(self.op) == "non op"      # cột H = "NON OP" (anh Hiệp chốt 28/10/2026)
 
 
 @dataclass

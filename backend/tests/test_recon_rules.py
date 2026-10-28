@@ -145,7 +145,7 @@ def test_map_header_missing_or_duplicated() -> None:
 
 
 def test_parse_rows_skips_done_blank_and_bad_rows() -> None:
-    base = ["7", "AMORE", "AESTURA", "MIX - 07/2026", "", "Cty EZS", "30/7/26", "", "72,680,000", "", "17268768",
+    base = ["7", "AMORE", "AESTURA", "MIX - 07/2026", "", "Cty EZS", "30/7/26", "NON OP", "72,680,000", "", "17268768",
             "", 77090000, "THANH NHÃ", "", "AMORE X EZS - FB", "", "", "", "HĐ: 1334 (08/10/2026)"]
     out = parse_rows(_sheet(
         [*base, "Đã xuất hóa đơn + Chờ tiền", "", "", "", "Done"],

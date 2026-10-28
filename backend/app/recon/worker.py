@@ -151,13 +151,18 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
     for row in outcome.rows:
         key = row_key(row.brand, row.campaign)
         sheets = index.get(key, {})
-        if not row.is_non_op:                       # phạm vi bot: chỉ dòng có cột H (OP) trống
+        h = normalize_text(row.op)
+        if h == "op":                               # phạm vi bot: chỉ cột H = "NON OP"
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
                                   ["NOT_FB_NON_OP"]))
-        elif data_brand_op(row):                    # H trống nhưng DATA BRAND ghi OP -> không đoán
+        elif not row.is_non_op:                     # H trống / giá trị lạ -> không tự bỏ, chờ duyệt
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
+                                  ["OP_COLUMN_BLANK" if not h else "OP_COLUMN_UNKNOWN"],
+                                  hints=[f"Cột H (OP) = {row.op!r} — cần 'NON OP' hoặc 'OP'"]))
+        elif data_brand_op(row):                    # H = NON OP nhưng DATA BRAND ghi OP -> không đoán
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["OP_CONFLICT_DATA_BRAND"],
-                                  hints=[f"Cột H trống, DATA BRAND.OP = {(brand_op or {})[brand_key(row.brand)]!r}"]))
+                                  hints=[f"Cột H NON OP, DATA BRAND.OP = {(brand_op or {})[brand_key(row.brand)]!r}"]))
         elif seen[key] > 1:
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["FBJT_ROW_DUPLICATE"]))
