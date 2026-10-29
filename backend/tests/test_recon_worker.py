@@ -26,10 +26,10 @@ LINKS = [OrderLink("Organica", "BDAY - 05/2026", ORDER_URL_FB),
 ORDERS = {ORDER_URL_FB: ORGANICA_MAY, ORDER_URL_SHISEIDO: SHISEIDO_Q3}
 
 
-def row(brand, campaign, end, entity, *, group="", op="NON OP", nmv=None, k=None, gmv=None):
+def row(brand, campaign, end, entity, *, group="", op="NON OP", nmv=None, k=None, gmv=None, status="", notes=""):
     r = [""] * len(HEADER)
     r[0], r[1], r[2], r[3], r[5], r[6], r[7] = "10/2026", group, brand, campaign, entity, end, op
-    r[8], r[10], r[12] = nmv, k, gmv
+    r[8], r[10], r[12], r[14], r[20] = nmv, k, gmv, notes, status
     return r
 
 
@@ -288,3 +288,19 @@ def test_scope_starts_august_2026(run):
     assert by[7] == (Action.SKIP, ["BEFORE_SCOPE"])                   # BDAY - 05/2026: nghiệm thu tay
     assert by[8] == (Action.SKIP, ["BEFORE_SCOPE"])                   # không có tháng, G trống
     assert by[9][1] != ["BEFORE_SCOPE"]                               # không có tháng nhưng G = 30/09 -> trong phạm vi
+
+
+@pytest.mark.parametrize("status, action, reason", [
+    ("", Action.DRAFT, None), ("Brand chưa gửi data", Action.DRAFT, None),
+    ("Đã Confirm số + Chờ brand gửi BBNT", Action.DRAFT, None),
+    ("Đã done BBNT + Chờ KT xuất HĐ nháp", Action.SKIP, "BBNT_ALREADY_DONE"),
+    ("Đã xuất hóa đơn + Chờ tiền", Action.SKIP, "BBNT_ALREADY_DONE"),
+    ("Chờ xử lý", Action.REVIEW, "STATUS_UNKNOWN")])
+def test_only_rows_before_bbnt_are_drafted(run, status, action, reason):
+    [p] = run(row(*ORG, status=status))
+    assert p.action is action and p.reasons == ([reason] if reason else [])
+
+
+def test_merged_line_note_goes_to_review(run):
+    [p] = run(row(*ORG, notes="GỘP LINE 1389"))
+    assert (p.action, p.reasons) == (Action.REVIEW, ["MERGED_LINE"]) and p.hints == ["NOTES = 'GỘP LINE 1389'"]
