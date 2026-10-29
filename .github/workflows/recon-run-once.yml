@@ -1,0 +1,42 @@
+# Worker đối soát — run-once: lập kế hoạch trên dữ liệu Google thật, LƯU trạng thái vào Postgres (idempotent).
+# Ghi ô I/K/M lên FB.JT CHỈ khi Variables RECON_SHEET_WRITE=on VÀ RECON_SHEET_WRITE_ID = RECON_FBJT_ID
+# (thử trên bản sao FB.JT trước). Không gửi email. Log chỉ có số đếm. Chạy tay: Actions -> recon-run-once.
+name: recon-run-once
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: recon-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_TIMEZONE: Asia/Ho_Chi_Minh
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RECON_GOOGLE_CLIENT_ID: ${{ secrets.RECON_GOOGLE_CLIENT_ID }}
+      RECON_GOOGLE_CLIENT_SECRET: ${{ secrets.RECON_GOOGLE_CLIENT_SECRET }}
+      RECON_GOOGLE_REFRESH_TOKEN: ${{ secrets.RECON_GOOGLE_REFRESH_TOKEN }}
+      RECON_FBJT_ID: ${{ vars.RECON_FBJT_ID }}
+      RECON_ORDER_LINKS_ID: ${{ vars.RECON_ORDER_LINKS_ID }}
+      MASTER_SHEET_URL: ${{ vars.MASTER_SHEET_URL }}
+      RECON_SHEET_WRITE: ${{ vars.RECON_SHEET_WRITE }}
+      RECON_SHEET_WRITE_ID: ${{ vars.RECON_SHEET_WRITE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements.txt
+      - run: python -m app.recon.worker run-once --live

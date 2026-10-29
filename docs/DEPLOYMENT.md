@@ -22,7 +22,7 @@
 |---|---|---|---|
 | `dry-run` | `python -m app.recon.worker dry-run --fixture <json> --master-file <xlsx>` | Không cần DB/token; không ghi gì | Có (PR #5) |
 | `dry-run --live` | Workflow `recon-dry-run` (chạy tay trên GitHub Actions) | Secrets `RECON_GOOGLE_*`; Variables `RECON_FBJT_ID`, `RECON_ORDER_LINKS_ID`, `MASTER_SHEET_URL`. Chỉ đọc Google | Có |
-| `run-once` | — | `DATABASE_URL`, `RECON_GOOGLE_*`, duyệt `RECON_STATE_PROPOSAL.md` | **Chưa có code** |
+| `run-once` | Workflow `recon-run-once` (chạy tay) | Secret `DATABASE_URL` + như dry-run; ghi FB.JT chỉ khi Variables `RECON_SHEET_WRITE=on` **và** `RECON_SHEET_WRITE_ID` = `RECON_FBJT_ID` | Có (chưa chạy thật) |
 
 Credential nền: worker **không** dùng token Google của nhân viên đăng nhập portal. Chỉ dùng refresh token của hộp
 thư gửi (`RECON_GOOGLE_*`) đặt trong GitHub Secrets của repo private, đọc qua biến môi trường, không in ra log.
@@ -48,3 +48,14 @@ khi chọn `report=true`. Lỗi bất ngờ chỉ in tên lỗi (ẩn chi tiết
 ## Migration
 
 Áp dụng tay theo thứ tự (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`, rồi `0002_recon_idempotency.up.sql`. CI job `migrations` chạy cả hai. Rollback: xem `OPERATIONS_RUNBOOK.md`.
+
+## Bật ghi I/K/M (thứ tự bắt buộc)
+
+1. Neon: tạo DB, chạy `0001` rồi `0002`, lưu `DATABASE_URL` vào GitHub Secrets.
+2. Chạy `recon-run-once` với `RECON_SHEET_WRITE` chưa đặt (= off): chỉ lưu trạng thái, không ghi Sheet.
+3. Tạo **bản sao FB.JT**, share Editor cho hộp thư bot. Đặt tạm `RECON_FBJT_ID` = ID bản sao, `RECON_SHEET_WRITE=on`,
+   `RECON_SHEET_WRITE_ID` = ID bản sao → chạy, kiểm tra ô I/K/M trên bản sao + bảng `sheet_write`, `audit_log`.
+   (Dùng DB riêng cho lần thử này, hoặc xoá dữ liệu thử trước khi chuyển sang FB.JT thật.)
+4. Chỉ khi bước 3 đúng: đặt lại `RECON_FBJT_ID` = FB.JT thật và `RECON_SHEET_WRITE_ID` = cùng ID đó.
+
+Tắt ghi ngay: xoá Variable `RECON_SHEET_WRITE` (hoặc đặt `off`).
