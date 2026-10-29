@@ -55,6 +55,14 @@ class Action(str, enum.Enum):
     DRAFT = "DRAFT"      # tạo BBNT được; kèm kế hoạch ghi ô I/K/M
 
 
+#: Status (U) còn được lập BBNT (anh Hiệp chốt 29/10/2026). Status sau đó = đã nghiệm thu tay -> SKIP.
+PRE_BBNT_STATUSES = frozenset(normalize_text(s) for s in ("", "Brand chưa gửi data",
+                                                          "Đã Confirm số + Chờ brand gửi BBNT"))
+KNOWN_LATER_STATUSES = frozenset(normalize_text(s) for s in (
+    "Đã có BBNT + Chờ Admin Check", "Đã done BBNT + Chờ KT xuất HĐ nháp",
+    "Đã done BBNT + chờ brand gửi bản cứng BBNT", "Đã xuất hóa đơn nháp + Chờ Brand confirm",
+    "Đã xuất hóa đơn + Chờ tiền"))
+
 #: Cảnh báo generator được đưa ra plan để KAM thấy (không chặn — xem docs/OPEN_QUESTIONS.md Q9).
 WARNING_CODES = ("RETURNED", "CANCELLED", "UNKNOWN_STATUS")
 
@@ -120,7 +128,8 @@ def cell_plans(rows: Sequence[FbjtRow], r: BbntResult) -> tuple[list[CellPlan], 
 def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink], contracts: Sequence[ContractRow],
                master: MasterData, templates: TemplateRegistry, open_order: Callable[[str], OrderOpener], *,
                today: date, now: datetime, issued_at: Mapping[str, datetime] | None = None,
-               brand_op: Mapping[str, str] | None = None, scope_from: date = SCOPE_FROM) -> list[CasePlan]:
+               brand_op: Mapping[str, str] | None = None, scope_from: date = SCOPE_FROM,
+               require_revenue: bool = True) -> list[CasePlan]:
     """``issued_at``: ``bbnt_issued_at`` đã lưu theo ``order_sheet_id`` — chạy lại (kể cả tháng khác) ra đúng
     số BBNT cũ. Case chưa có -> dùng ``now`` (lần lập đầu). ``brand_op``: DATA BRAND brand (chuẩn hoá) -> cột OP."""
     outcome = parse_rows(fbjt_values)
@@ -170,6 +179,18 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["OP_COLUMN_BLANK" if not h else "OP_COLUMN_UNKNOWN"],
                                   hints=[f"Cột H (OP) = {row.op!r} — cần 'NON OP' hoặc 'OP'"]))
+        elif require_revenue and not (row.gmv and row.gmv > 0):      # chỉ nghiệm thu có doanh thu (cột M > 0)
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
+                                  ["NO_REVENUE"], hints=[f"HRV GMV (M) = {row.gmv}"]))
+        elif normalize_text(row.status) not in PRE_BBNT_STATUSES:    # đã nghiệm thu tay / status lạ
+            known = normalize_text(row.status) in KNOWN_LATER_STATUSES
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign,
+                                  Action.SKIP if known else Action.REVIEW,
+                                  ["BBNT_ALREADY_DONE" if known else "STATUS_UNKNOWN"],
+                                  hints=[f"Status (U) = {row.status!r}"]))
+        elif re.search(r"\bgop\s*line\b", normalize_text(row.notes)):   # dòng đã gộp vào BBNT dòng khác
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
+                                  ["MERGED_LINE"], hints=[f"NOTES = {row.notes!r}"]))
         elif data_brand_op(row):                    # H = NON OP nhưng DATA BRAND ghi OP -> không đoán
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["OP_CONFLICT_DATA_BRAND"],

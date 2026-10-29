@@ -23,3 +23,5 @@ Chỉ ghi điều **chưa chốt**. Quyết định đã chốt nằm ở `ARCHI
 | Q13 | Duyệt `RECON_STATE_PROPOSAL.md`: đồng ý cả 3 ý; bot được thêm cột vào file link tổng order, không thêm cột FB.JT | Migration `0002_recon_idempotency` + test |
 | — | Phạm vi Non-OP | Chốt 28/10: cột H = "NON OP" → xử lý; "OP" → bỏ; trống/khác → chờ duyệt; DATA BRAND.OP chỉ dùng để báo mâu thuẫn |
 | — | Camp chưa có cột G | Chốt 28/10: chỉ xét campaign từ 08/2026; trước đó bỏ qua (`BEFORE_SCOPE`) |
+| — | Dòng đã nghiệm thu tay / gộp line | Chốt 29/10: chỉ lập BBNT khi U chưa qua bước BBNT; "GỘP LINE" → chờ duyệt |
+| Q14 | Cột M (HRV GMV) giờ là điều kiện "có doanh thu". Khi M khác GMV tính từ file order (BBNT): bot vẫn chờ KAM duyệt Đổi/Giữ (theo 12.1), hay coi M là nguồn chuẩn và không so M? | Ghi I/K/M, REVIEW `FIGURES_DIFFER_FBJT` | Giữ 12.1: khác → chờ duyệt |

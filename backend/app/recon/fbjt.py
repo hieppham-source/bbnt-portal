@@ -35,6 +35,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "pic": ("pic",),
     "title_mail": ("title mail",),
     "invoice_note": ("oanh note tinh trang hd vat va thanh toan",),
+    "notes": ("notes - ghi chu",),
     "status": ("status",),
 }
 #: Header được phép xuất hiện nhiều lần; lấy lần đầu.
@@ -100,6 +101,7 @@ class FbjtRow:
     title_mail: str
     invoice_note: str
     status: str
+    notes: str = ""
 
     @property
     def is_done(self) -> bool:
@@ -156,6 +158,7 @@ def parse_rows(values: Sequence[Sequence[Any]], *, header_row: int = HEADER_ROW)
                 nmv=parse_money(_cell(row, c["nmv"])), commission=parse_money(_cell(row, c["commission"])),
                 gmv=parse_money(_cell(row, c["gmv"])), pic=_text(_cell(row, c["pic"])),
                 title_mail=_text(_cell(row, c["title_mail"])), invoice_note=_text(_cell(row, c["invoice_note"])),
+                notes=_text(_cell(row, c["notes"])),
                 status=_text(_cell(row, c["status"])),
             )
         except ValueError as exc:

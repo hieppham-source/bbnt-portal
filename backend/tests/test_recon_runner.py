@@ -76,7 +76,8 @@ def test_figures_changed_after_issue_goes_to_review_without_new_writes(conn, run
 def test_cell_differs_opens_one_review_and_approved_change_is_written(conn, run):
     _, st, run_id = go(conn, run, row(*ORG, nmv=1))
     assert one(conn, "SELECT state FROM recon_case") == ("NEEDS_REVIEW",) and st.reviews_opened == 1
-    assert go(conn, run, row(*ORG, nmv=1))[1].reviews_opened == 0                # không mở trùng
+    _, st, run_id = go(conn, run, row(*ORG, nmv=1))
+    assert st.reviews_opened == 0                                                # không mở trùng
     conn.execute("UPDATE cell_review SET decision = 'CHANGE', decided_by = 'kam@hannaholala.com', decided_at = now()")
     got: list[CellWrite] = []
 
@@ -155,3 +156,11 @@ def test_sheet_writer_checks_before_and_after():
         == ["FAILED"]
     assert [r.status for r in write_cells(FakeSheet({}, sabotage=True), "sid", TAB, [CellWrite(7, "I", None, K)])] \
         == ["FAILED"]
+
+
+def test_out_of_scope_case_keeps_planned_writes_unexecuted(conn, run):
+    go(conn, run, row(*ORG))                                              # 3 ô PLANNED
+    _, st, run_id = go(conn, run, row(*ORG, status="Đã done BBNT + Chờ KT xuất HĐ nháp"))
+    write_back(conn, lambda ws: [CellResult(w, "VERIFIED") for w in ws], {"nmv": "I", "commission": "K", "gmv": "M"},
+               now=NOW, run_id=run_id, st=st)
+    assert st.written == 0 and one(conn, "SELECT count(*) FROM sheet_write WHERE status = 'PLANNED'")[0] == 3

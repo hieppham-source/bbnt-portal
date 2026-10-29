@@ -164,7 +164,8 @@ def write_back(conn: psycopg.Connection, write: Writer, letters: Mapping[str, st
     todo = conn.execute(
         "SELECT sw.id, sr.last_row_number, sw.column_name, sw.seen_value, sw.target_value FROM sheet_write sw "
         "JOIN sheet_row sr ON sr.id = sw.sheet_row_id JOIN recon_case c ON c.id = sw.case_id "
-        "WHERE sw.status = 'PLANNED' AND c.state NOT IN ('ON_HOLD', 'DONE', 'ERROR') ORDER BY sw.id").fetchall()
+        "WHERE sw.status = 'PLANNED' AND c.state NOT IN ('ON_HOLD', 'DONE', 'ERROR') "
+        "AND c.last_run_id = %s ORDER BY sw.id", (run_id,)).fetchall()   # chỉ case lần chạy này còn trong phạm vi
     if not todo:
         return
     writes = [CellWrite(r[1], letters[r[2]], r[3], r[4]) for r in todo]
