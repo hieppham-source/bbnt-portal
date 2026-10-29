@@ -292,7 +292,9 @@ def summary(plans: Sequence[CasePlan]) -> list[str]:
             + [f"  {r}: {n}" for r, n in sorted(reasons.items())])
 
 
-def _live(today: date, now: datetime, scope_from: date) -> list[CasePlan]:
+def _live(today: date, now: datetime, scope_from: date, issued_at: Mapping[str, datetime] | None = None
+          ) -> tuple[list[CasePlan], list[list[Any]], str]:
+    """(plans, giá trị tab FB-{YYYY}, access token)."""
     from app.master.repository import build_master, google_sheet_source
     from app.recon.google_bot import (
         BotEnv,
@@ -315,18 +317,66 @@ def _live(today: date, now: datetime, scope_from: date) -> list[CasePlan]:
         ref = parse_sheet_url(url)
         return lambda: [reader.open(ref)]
 
-    return plan_cases(reader.read(fbjt, sheet_name=f"FB-{today.year}"), links,
-                      parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")),
-                      build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))()),
-                      TemplateRegistry(DEFAULT_TEMPLATES_DIR), open_order, today=today, now=now,
-                      brand_op=parse_brand_op(reader.read(fbjt, sheet_name="DATA BRAND")), scope_from=scope_from)
+    values = reader.read(fbjt, sheet_name=f"FB-{today.year}")
+    plans = plan_cases(values, links, parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")),
+                       build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))()),
+                       TemplateRegistry(DEFAULT_TEMPLATES_DIR), open_order, today=today, now=now, issued_at=issued_at,
+                       brand_op=parse_brand_op(reader.read(fbjt, sheet_name="DATA BRAND")), scope_from=scope_from)
+    return plans, values, token
+
+
+def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
+    """Plan + lưu DB (idempotent); ghi I/K/M chỉ khi RECON_SHEET_WRITE=on VÀ RECON_SHEET_WRITE_ID = RECON_FBJT_ID."""
+    import os
+    import uuid
+
+    import psycopg
+    import requests
+
+    from app.recon.fbjt import WRITABLE
+    from app.recon.google_bot import BotConfigError
+    from app.recon.runner import LOCK_KEY, persist, stored_issued_at, write_back
+    from app.recon.sheet_writer import write_cells
+
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise BotConfigError("Thiếu biến môi trường: DATABASE_URL")
+    fbjt_id = os.environ.get("RECON_FBJT_ID", "").strip()
+    write_on = os.environ.get("RECON_SHEET_WRITE", "off").strip().lower() == "on"
+    write_ok = write_on and os.environ.get("RECON_SHEET_WRITE_ID", "").strip() == fbjt_id != ""
+    tab = f"FB-{today.year}"
+    with psycopg.connect(url, autocommit=True) as conn:
+        if not conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0]:  # type: ignore[index]
+            return ["Đang có worker khác chạy — bỏ qua lần này"]
+        run_id = uuid.uuid4()
+        conn.execute("INSERT INTO workflow_run (id, mode, started_at) VALUES (%s, 'RUN_ONCE', %s)", (run_id, now))
+        try:
+            plans, values, token = _live(today, now, scope_from, stored_issued_at(conn))
+            outcome = parse_rows(values)
+            st = persist(conn, plans, {r.row_number: r for r in outcome.rows}, tab=tab, now=now, run_id=run_id)
+            if write_ok:
+                s = requests.Session()
+                s.headers["Authorization"] = f"Bearer {token}"
+                write_back(conn, lambda ws: write_cells(s, fbjt_id, tab, ws),
+                           {k: outcome.columns.letter(k) for k in WRITABLE}, now=now, run_id=run_id, st=st)
+            conn.execute("UPDATE workflow_run SET finished_at = now(), status = 'OK', rows_scanned = %s WHERE id = %s",
+                         (len(outcome.rows), run_id))
+        except Exception as exc:
+            conn.execute("UPDATE workflow_run SET finished_at = now(), status = 'FAILED', error = %s WHERE id = %s",
+                         (type(exc).__name__, run_id))
+            raise
+    return summary(plans) + [
+        f"DB: case mới {st.cases_new}, chuyển trạng thái {st.transitions}, không đổi {st.unchanged}, "
+        f"bot không chạm {st.untouched}, ô chờ ghi mới {st.writes_planned}, ô chờ duyệt mới {st.reviews_opened}",
+        ("GHI FB.JT: " + f"đã ghi {st.written}, xung đột {st.conflicts}, lỗi {st.failed}") if write_ok else
+        ("GHI FB.JT: TẮT" + (" (RECON_SHEET_WRITE_ID khác RECON_FBJT_ID)" if write_on else ""))]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     from app.master.repository import build_master, xlsx_source
 
     p = argparse.ArgumentParser(prog="python -m app.recon.worker")
-    p.add_argument("mode", choices=["dry-run"])
+    p.add_argument("mode", choices=["dry-run", "run-once"])
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--fixture", type=Path, help="JSON giả lập (cần --master-file)")
     src.add_argument("--live", action="store_true", help="Đọc Google thật bằng token nền (biến RECON_*), chỉ đọc")
@@ -339,11 +389,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     a = p.parse_args(argv)
     now = datetime.now(UTC)
     today = a.today or now.date()
+    if a.mode == "run-once" and not a.live:
+        p.error("run-once chỉ chạy với --live")
     if a.live:
         from app.recon.google_bot import BotConfigError
 
         try:
-            plans = _live(today, now, a.scope_from)
+            if a.mode == "run-once":
+                print("\n".join(_run_once(today, now, a.scope_from)))
+                return 0
+            plans = _live(today, now, a.scope_from)[0]
         except Exception as exc:  # noqa: BLE001 — log CI: không in chi tiết có thể chứa dữ liệu brand
             print(f"LỖI {type(exc).__name__}: {exc if isinstance(exc, BotConfigError) else '(chi tiết ẩn)'}",
                   file=sys.stderr)

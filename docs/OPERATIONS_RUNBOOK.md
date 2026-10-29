@@ -20,3 +20,12 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 - Backend (Render): revert PR trên `main` → CI xanh → Render tự deploy; hoặc Render → Deploys → Rollback.
 - Frontend (Cloudflare): trong worktree deploy `git checkout --detach <commit trước>` rồi `.\deploy.cmd`; hoặc `npx wrangler rollback`.
 - Worker: chưa chạy production. Khi có: tắt workflow lịch trước, rồi mới revert code/migration.
+
+## Hoàn tác ô I/K/M bot đã ghi
+`SELECT entity_id, before, after, at FROM audit_log WHERE action = 'SHEET_WRITE' ORDER BY id DESC;` — `entity_id` là
+ô (vd `I1548`), `before.value` là giá trị trước khi ghi. Gõ lại giá trị đó vào FB.JT. Ô ở trạng thái `CONFLICT` /
+`FAILED` trong `sheet_write` là ô bot **không** ghi được (hoặc ghi rồi đọc lại không khớp) — kiểm tra tay.
+
+## Duyệt ô khác số BBNT (chưa có dashboard)
+`UPDATE cell_review SET decision = 'CHANGE' | 'KEEP', decided_by = '<email>', decided_at = now() WHERE id = ...;`
+CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô trước khi ghi).
