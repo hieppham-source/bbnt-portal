@@ -128,7 +128,8 @@ def cell_plans(rows: Sequence[FbjtRow], r: BbntResult) -> tuple[list[CellPlan], 
 def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink], contracts: Sequence[ContractRow],
                master: MasterData, templates: TemplateRegistry, open_order: Callable[[str], OrderOpener], *,
                today: date, now: datetime, issued_at: Mapping[str, datetime] | None = None,
-               brand_op: Mapping[str, str] | None = None, scope_from: date = SCOPE_FROM) -> list[CasePlan]:
+               brand_op: Mapping[str, str] | None = None, scope_from: date = SCOPE_FROM,
+               require_revenue: bool = True) -> list[CasePlan]:
     """``issued_at``: ``bbnt_issued_at`` đã lưu theo ``order_sheet_id`` — chạy lại (kể cả tháng khác) ra đúng
     số BBNT cũ. Case chưa có -> dùng ``now`` (lần lập đầu). ``brand_op``: DATA BRAND brand (chuẩn hoá) -> cột OP."""
     outcome = parse_rows(fbjt_values)
@@ -178,6 +179,9 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.REVIEW,
                                   ["OP_COLUMN_BLANK" if not h else "OP_COLUMN_UNKNOWN"],
                                   hints=[f"Cột H (OP) = {row.op!r} — cần 'NON OP' hoặc 'OP'"]))
+        elif require_revenue and not (row.gmv and row.gmv > 0):      # chỉ nghiệm thu có doanh thu (cột M > 0)
+            plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign, Action.SKIP,
+                                  ["NO_REVENUE"], hints=[f"HRV GMV (M) = {row.gmv}"]))
         elif normalize_text(row.status) not in PRE_BBNT_STATUSES:    # đã nghiệm thu tay / status lạ
             known = normalize_text(row.status) in KNOWN_LATER_STATUSES
             plans.append(CasePlan(None, None, [row.row_number], [row.brand], row.campaign,

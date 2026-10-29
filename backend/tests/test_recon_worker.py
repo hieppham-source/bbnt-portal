@@ -43,9 +43,10 @@ def run(master_tables):
     templates = TemplateRegistry(DEFAULT_TEMPLATES_DIR)
 
     def go(*rows, contracts=CONTRACTS, today=TODAY, links=LINKS, orders=ORDERS, now=NOW, issued_at=None,
-           master_=master, scope_from=date(2026, 1, 1)):     # dữ liệu mẫu là tháng 05–09/2026
+           master_=master, scope_from=date(2026, 1, 1), require_revenue=False):   # mẫu: tháng 05–09, M trống
         return plan_cases(sheet(*rows), links, contracts, master_, templates, worker._fixture_opener(orders),
-                          today=today, now=now, issued_at=issued_at, scope_from=scope_from)
+                          today=today, now=now, issued_at=issued_at, scope_from=scope_from,
+                          require_revenue=require_revenue)
     return go
 
 
@@ -101,7 +102,7 @@ def test_op_and_contract_problems_block(run):
 
 
 def test_cli_dry_run_prints_plan(tmp_path, capsys):
-    fixture = {"fbjt": sheet(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS")),
+    fixture = {"fbjt": sheet(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS", gmv=7_200_000)),
                "links": [vars(x) for x in LINKS], "contracts": [vars(x) for x in CONTRACTS], "orders": ORDERS}
     f = tmp_path / "fixture.json"
     f.write_text(json.dumps(fixture, ensure_ascii=False), encoding="utf-8")
@@ -304,3 +305,11 @@ def test_only_rows_before_bbnt_are_drafted(run, status, action, reason):
 def test_merged_line_note_goes_to_review(run):
     [p] = run(row(*ORG, notes="GỘP LINE 1389"))
     assert (p.action, p.reasons) == (Action.REVIEW, ["MERGED_LINE"]) and p.hints == ["NOTES = 'GỘP LINE 1389'"]
+
+
+@pytest.mark.parametrize("gmv, action, reason", [
+    (None, Action.SKIP, "NO_REVENUE"), (0, Action.SKIP, "NO_REVENUE"),
+    (7_200_000, Action.DRAFT, None), (5, Action.REVIEW, "FIGURES_DIFFER_FBJT")])
+def test_only_rows_with_revenue_in_column_m(run, gmv, action, reason):
+    [p] = run(row(*ORG, gmv=gmv), require_revenue=True)
+    assert p.action is action and p.reasons == ([reason] if reason else [])
