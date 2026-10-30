@@ -313,3 +313,13 @@ def test_merged_line_note_goes_to_review(run):
 def test_only_rows_with_revenue_in_column_m(run, gmv, action, reason):
     [p] = run(row(*ORG, gmv=gmv), require_revenue=True)
     assert p.action is action and p.reasons == ([reason] if reason else [])
+
+
+BLANK_STATUS = {**ORDERS, ORDER_URL_FB: [r if r[1:2] != ["FB002"] else [r[0], r[1], "", *r[3:]] for r in ORGANICA_MAY]}
+
+
+def test_blank_order_status_waits_for_brand_before_bbnt(run):
+    [p] = run(row(*ORG), orders=BLANK_STATUS)
+    assert (p.action, p.reasons, p.bbnt_number, p.cells) == (Action.WAIT, ["STATUS_INCOMPLETE"], None, [])
+    assert p.job is not None and p.order_period == (date(2026, 5, 3), date(2026, 6, 2))   # mọi dòng của link (như BBNT)
+    assert p.hints == ["1 dòng order chưa có status"]

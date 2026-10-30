@@ -103,3 +103,12 @@ def test_0003_seeds_test_template_and_down_up_is_clean(fresh_db: None) -> None:
         == ["ACCEPTANCE:APPROVED", "ACCEPTANCE_TEST:NOT_CONFIGURED"]
     run_file("0003_recon_email.down.sql")
     assert psql("SELECT count(*) FROM email_template;").stdout.strip() == "0"
+
+
+def test_0004_seeds_status_templates_and_down_is_clean(fresh_db: None) -> None:
+    run_file("0003_recon_email.up.sql")
+    run_file("0004_recon_status_emails.up.sql")
+    run_file("0004_recon_status_emails.up.sql")
+    assert psql("SELECT count(*) FROM email_template WHERE code LIKE 'STATUS_%';").stdout.strip() == "4"
+    run_file("0004_recon_status_emails.down.sql")
+    assert psql("SELECT count(*) FROM email_template WHERE code LIKE 'STATUS_%';").stdout.strip() == "0"

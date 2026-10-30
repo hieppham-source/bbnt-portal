@@ -87,6 +87,18 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 | 48 | Ngoài giờ / thứ Bảy | `OUTSIDE_SEND_WINDOW`, gửi ở lần chạy trong giờ kế tiếp | |
 | 49 | Ca mới lập BBNT, chưa ghi I/K/M | `FIGURES_MISMATCH_FBJT`, không gửi | |
 
+## 4b'. Email 1 — brand điền status
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 51 | Ca qua G + 25, file order còn 1 dòng trống status | Case "Chờ G + 25 / chờ brand điền status", lý do `STATUS_INCOMPLETE`; chưa có số BBNT, không ghi I/K/M | |
+| 52 | Như #51, chế độ test | 1 thư `[TEST]` Email 1: link order, kỳ đơn, hạn = ngày gửi + 3 ngày làm việc; "bot tạo luồng mới" | |
+| 53 | Như #51, live, chưa có luồng tay | Thư mới đúng tiêu đề mẫu; case lưu loopmail; chạy lại không gửi lần 2 | |
+| 54 | Có luồng tay đúng TITLE MAIL | Email 1 reply vào luồng đó | |
+| 55 | Quá hạn chưa điền | Dashboard "Thư chờ duyệt" có thư nhắc lần 1; chưa bấm → không gửi | |
+| 56 | Bấm **Gửi** | Lần chạy sau thư nhắc reply vào loopmail; 3 ngày sau có thư nhắc lần 2 chờ duyệt | |
+| 57 | Brand điền đủ status | Lập BBNT, ghi I/K/M, Email 2 reply cùng luồng; thư nhắc chưa gửi → huỷ | |
+
 ## 4c. Lịch
 
 | # | Dựng | Mong đợi | |
@@ -95,7 +107,7 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 
 ## 5. Trước khi chuyển sang thật
 
-- [ ] Toàn bộ 50 dòng ✅.
+- [ ] Toàn bộ 57 dòng ✅.
 - [ ] Đặt `RECON_EMAIL_SIGNER`. Email 1/3/4 làm xong theo chốt Q15–Q18.
 - [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `RECON_SCHEDULE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.
 - [ ] Chạy migration `0003` trên Neon main.

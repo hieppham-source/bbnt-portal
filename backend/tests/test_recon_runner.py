@@ -31,6 +31,7 @@ def conn() -> Iterator[psycopg.Connection]:
     run_file("0001_recon_init.up.sql")
     run_file("0002_recon_idempotency.up.sql")
     run_file("0003_recon_email.up.sql")
+    run_file("0004_recon_status_emails.up.sql")
     with psycopg.connect(URL or "", autocommit=True) as c:
         yield c
 
@@ -193,7 +194,7 @@ def test_test_email_sent_once_per_case_with_gate_notes(conn, run):
     [(msg, thread)] = gmail.sent
     assert st.emails_sent == 1 and msg["To"] == "hiep.pham@hannaholala.com" and thread is None
     text = msg.get_body(("plain",)).get_content()
-    assert "KHÔNG ĐẠT: FIGURES_MISMATCH_FBJT" in text and "thread t1" in text
+    assert "CHƯA GỬI — FIGURES_MISMATCH_FBJT" in text and "reply thread t1" in text
     assert one(conn, "SELECT status, to_addrs, cc_addrs FROM email_outbox") == ("SENT", ["hiep.pham@hannaholala.com"],
                                                                                [])
     assert one(conn, "SELECT state, gmail_thread_id, email_reasons FROM recon_case") == (
@@ -279,3 +280,77 @@ def test_live_outside_send_window_waits(conn, run):
     send_acceptance_emails(conn, plans, lambda p, at: MAIL, gmail, EmailSettings.from_env(LIVE),
                            now=datetime(2026, 10, 31, 3, 0, tzinfo=UTC), run_id=run_id, st=st)   # thứ Bảy
     assert gmail.sent == [] and one(conn, "SELECT email_reasons FROM recon_case") == (["OUTSIDE_SEND_WINDOW"],)
+
+
+# --------------------------------------------------------------------------------------------- Email 1 + nhắc
+def _status(conn, run, gmail, env, now=NOW):
+    from app.recon.emailer import EmailSettings, StatusMail
+    from app.recon.runner import send_status_requests
+
+    from .test_recon_worker import BLANK_STATUS
+    plans, st, run_id = go(conn, run, row(*ORG), now=now, orders=BLANK_STATUS)
+    mail = StatusMail("ORGANICA", ["ORGANICA"], "EZS", "", "BDAY - 05/2026", "https://link", None, ["kt@brand.vn"])
+    send_status_requests(conn, plans, lambda p: mail, gmail, EmailSettings.from_env(env), now=now, run_id=run_id,
+                         st=st)
+    return st
+
+
+def test_email1_live_opens_new_loopmail_once(conn, run):
+    from .test_recon_email import LIVE, FakeGmail
+    gmail = FakeGmail()
+    st = _status(conn, run, gmail, LIVE)
+    [(msg, thread)] = gmail.sent
+    assert thread is None and msg["Subject"] == "ORGANICA x EZS - FB - BDAY 05/26" and msg["To"] == "kt@brand.vn"
+    text = msg.get_body(("plain",)).get_content()
+    assert "Link order: https://link" in text and "trước ngày 02/11/2026" in text and st.emails_sent == 1
+    assert one(conn, "SELECT state, gmail_thread_id, loopmail_rfc822_id = %s FROM recon_case",
+               msg["Message-ID"]) == ("WAITING", "new", True)
+    _status(conn, run, gmail, LIVE)
+    assert len(gmail.sent) == 1                                                 # không gửi Email 1 lần 2
+
+
+def test_email1_reminder_needs_approval_then_goes_into_loopmail(conn, run):
+    from .test_recon_email import LIVE, FakeGmail
+    gmail = FakeGmail()
+    _status(conn, run, gmail, LIVE)                                             # T4 28/10: Email 1, hạn 02/11
+    _status(conn, run, gmail, LIVE, now=datetime(2026, 11, 2, 2, 0, tzinfo=UTC))
+    assert one(conn, "SELECT count(*) FROM email_outbox WHERE kind = 'STATUS_REMINDER'")[0] == 0   # chưa quá hạn
+    later = datetime(2026, 11, 3, 2, 0, tzinfo=UTC)
+    _status(conn, run, gmail, LIVE, now=later)
+    assert one(conn, "SELECT status, cycle_no FROM email_outbox WHERE kind = 'STATUS_REMINDER'") == (
+        "PENDING_REVIEW", 1)
+    _status(conn, run, gmail, LIVE, now=later)
+    assert len(gmail.sent) == 1                                                 # chưa duyệt: không gửi, không tạo thêm
+    conn.execute("UPDATE email_outbox SET status = 'QUEUED' WHERE kind = 'STATUS_REMINDER'")   # KAM duyệt (API)
+    _status(conn, run, gmail, LIVE, now=later)
+    msg, thread = gmail.sent[-1]
+    assert thread == "new" and msg["In-Reply-To"] == "<new@x>"
+    assert "xin nhắc lại" in msg.get_body(("plain",)).get_content()
+    assert one(conn, "SELECT status FROM email_outbox WHERE kind = 'STATUS_REMINDER'") == ("SENT",)
+
+
+def test_queued_reminder_cancelled_once_brand_filled_status(conn, run):
+    from .test_recon_email import LIVE, FakeGmail
+    gmail = FakeGmail()
+    _status(conn, run, gmail, LIVE)
+    later = datetime(2026, 11, 3, 2, 0, tzinfo=UTC)
+    _status(conn, run, gmail, LIVE, now=later)
+    conn.execute("UPDATE email_outbox SET status = 'QUEUED' WHERE kind = 'STATUS_REMINDER'")
+    plans, st, run_id = go(conn, run, row(*ORG), now=later)                     # brand đã điền đủ -> BBNT
+    from app.recon.emailer import EmailSettings
+    from app.recon.runner import send_status_requests
+    send_status_requests(conn, plans, lambda p: "x", gmail, EmailSettings.from_env(LIVE), now=later, run_id=run_id,
+                         st=st)
+    assert one(conn, "SELECT state FROM recon_case") == ("BBNT_DRAFTED",) and len(gmail.sent) == 1
+    assert one(conn, "SELECT status FROM email_outbox WHERE kind = 'STATUS_REMINDER'") == ("CANCELLED",)
+
+
+def test_email1_test_mode_goes_to_test_inbox_only(conn, run):
+    from .test_recon_email import TEST, FakeGmail
+    gmail = FakeGmail()
+    _status(conn, run, gmail, TEST)
+    [(msg, thread)] = gmail.sent
+    assert thread is None and msg["To"] == "hiep.pham@hannaholala.com" and msg["Cc"] is None
+    assert "chưa có — bot tạo luồng mới" in msg.get_body(("plain",)).get_content()
+    assert one(conn, "SELECT kind, status FROM email_outbox") == ("STATUS_REQUEST_TEST", "SENT")
+    assert one(conn, "SELECT gmail_thread_id FROM recon_case") == (None,)        # test không lưu loopmail

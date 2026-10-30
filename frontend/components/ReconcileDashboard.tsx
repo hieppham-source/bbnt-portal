@@ -5,12 +5,15 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   type ApiError,
   chooseLoopmail,
+  decideEmail,
   decideReview,
   holdCase,
   type ReconCase,
+  type ReconEmail,
   type ReconMe,
   type ReconReview,
   reconCases,
+  reconEmails,
   reconMe,
   reconReviews,
   resumeCase,
@@ -20,7 +23,7 @@ import { vnd } from "@/lib/format"
 import { handleAuthError, useIdToken } from "./useIdToken"
 
 const STATE_LABEL: Record<string, string> = {
-  WAITING: "Chờ G + 25",
+  WAITING: "Chờ G + 25 / chờ brand điền status",
   NEEDS_REVIEW: "Cần xử lý",
   BBNT_DRAFTED: "Đã lập BBNT",
   FIGURES_WRITTEN: "Đã ghi số FB.JT",
@@ -38,6 +41,7 @@ export default function ReconcileDashboard() {
   const [me, setMe] = useState<ReconMe | null>(null)
   const [cases, setCases] = useState<ReconCase[]>([])
   const [reviews, setReviews] = useState<ReconReview[]>([])
+  const [emails, setEmails] = useState<ReconEmail[]>([])
   const [state, setState] = useState("NEEDS_REVIEW")
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -52,10 +56,16 @@ export default function ReconcileDashboard() {
     if (!token) return
     setBusy(true)
     try {
-      const [m, c, r] = await Promise.all([reconMe(token), reconCases(token), reconReviews(token)])
+      const [m, c, r, e] = await Promise.all([
+        reconMe(token),
+        reconCases(token),
+        reconReviews(token),
+        reconEmails(token),
+      ])
       setMe(m)
       setCases(c)
       setReviews(r)
+      setEmails(e)
       setError(null)
     } catch (e) {
       fail(e)
@@ -155,6 +165,44 @@ export default function ReconcileDashboard() {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section className="card wide">
+        <div className="card-head">
+          <h2>Thư chờ duyệt ({emails.length})</h2>
+        </div>
+        <p className="hint">
+          Thư nhắc bot soạn sẵn. <b>Gửi</b>: lần chạy bot sau gửi (trong giờ hành chính), hạn mới tính từ ngày gửi.{" "}
+          <b>Bỏ</b>: không gửi. Brand đã điền đủ status thì thư chưa gửi tự huỷ.
+        </p>
+        {emails.length === 0 ? (
+          <p className="muted">Không có thư nào chờ duyệt.</p>
+        ) : (
+          emails.map((m) => (
+            <details key={m.id} className="email-preview">
+              <summary>
+                {m.brands.join(", ")} · {m.campaign} · lần nhắc {m.cycle_no} — {m.subject}
+              </summary>
+              <p className="muted">
+                To: {m.to.join(", ")}
+                {m.cc.length > 0 && <> · CC: {m.cc.join(", ")}</>}
+              </p>
+              <pre>{m.body}</pre>
+              <div className="actions">
+                <button
+                  className="primary"
+                  disabled={!canApprove || busy}
+                  onClick={() => act(() => decideEmail(token, m.id, "SEND"))}
+                >
+                  Gửi
+                </button>
+                <button disabled={!canApprove || busy} onClick={() => act(() => decideEmail(token, m.id, "SKIP"))}>
+                  Bỏ
+                </button>
+              </div>
+            </details>
+          ))
         )}
       </section>
 

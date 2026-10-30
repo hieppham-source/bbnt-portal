@@ -16,9 +16,10 @@ import html
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from email.message import EmailMessage
+from email.utils import make_msgid
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -27,6 +28,8 @@ from app.recon.rules import BusinessCalendar, confirm_deadline
 
 KIND = "ACCEPTANCE_TEST"
 LIVE_KIND = "ACCEPTANCE"
+#: Email 1 (nhắc brand điền status link order, tạo loopmail) và bản nhắc lại; chế độ test thêm hậu tố ``_TEST``.
+STATUS_REQUEST, STATUS_REMINDER = "STATUS_REQUEST", "STATUS_REMINDER"
 TEST_DOMAIN = "@hannaholala.com"
 INTERNAL_CC = ("fb@hannaholala.com", "mcnolala@gmail.com", "admin@hannaholala.com", "trang.nguyen@hannaholala.com",
                "huong.nguyen@hannaholala.com", "hieu.nguyen@hannaholala.com", "tu.bui@hannaholala.com",
@@ -94,6 +97,12 @@ def _pct(v: Decimal | None) -> str:
     return "-" if v is None else f"{(v * 100).quantize(Decimal('0.01')).normalize():f}%".replace(".", ",")
 
 
+def template_subject(group: str, brands: Sequence[str], entity: str, campaign: str) -> str:
+    """Mẫu: ``{{GROUP_BRAND}} ({{BRAND}}) x {{PHAP_NHAN}} - FB - {{TEN_CAMP}} {{THANG_NGHIEM_THU}}``."""
+    name, month = camp_parts(campaign)
+    return subject(group, brands, entity, f"{name} {month}".strip())
+
+
 def camp_parts(campaign: str) -> tuple[str, str]:
     """``'MIX - 07/2026'`` -> (``{{TEN_CAMP}}`` 'MIX', ``{{THANG_NGHIEM_THU}}`` '07/26')."""
     m = re.match(r"^\s*(.+?)\s*-\s*(\d{1,2})\s*/\s*(\d{2,4})\s*$", campaign or "")
@@ -132,9 +141,7 @@ class BbntMail:
         return self.a + self.b - self.c
 
     def subject(self) -> str:
-        """Mẫu: ``{{GROUP_BRAND}} ({{BRAND}}) x {{PHAP_NHAN}} - FB - {{TEN_CAMP}} {{THANG_NGHIEM_THU}}``."""
-        name, month = camp_parts(self.campaign)
-        return subject(self.group, self.brands, self.entity, f"{name} {month}".strip())
+        return template_subject(self.group, self.brands, self.entity, self.campaign)
 
     def rows(self) -> list[tuple[str, str, str, str]]:
         """Bảng confirm số (EMAIL 2) đúng pháp nhân: (khoản, tỷ lệ, thành tiền, ghi chú)."""
@@ -274,6 +281,53 @@ def find_loopmail(gmail: Any, title: str, brand_to: Sequence[str]) -> list[Threa
     return [t for t in (gmail.thread(i) for i in gmail.search(title)) if matches_loopmail(t, title, brand_to)]
 
 
+# ----------------------------------------------------------------------------------------------- Email 1
+@dataclass(frozen=True)
+class StatusMail:
+    """Email 1 (G + 25, brand chưa điền đủ status link order) và bản nhắc lại."""
+
+    group: str
+    brands: list[str]
+    entity: str
+    title: str                          # TITLE MAIL (tìm loopmail tay có sẵn)
+    campaign: str
+    link: str                           # {{LINK_ORDER}}
+    period: tuple[date, date] | None    # {{TU_NGAY}}, {{DEN_NGAY}} = ngày đơn đầu / cuối trong file order
+    brand_to: list[str]
+
+    def subject(self) -> str:
+        return template_subject(self.group, self.brands, self.entity, self.campaign)
+
+
+def _camp(campaign: str) -> str:
+    name, month = camp_parts(campaign)
+    return f"{name} {month}".strip()
+
+
+def status_request_text(m: StatusMail, due: str, signer: str) -> str:
+    """EMAIL 1 — nhắc điền status vào link order (mail mới, tạo loopmail)."""
+    when = f" (từ {m.period[0]:%d/%m/%Y} đến {m.period[1]:%d/%m/%Y})" if m.period else ""
+    return "\n".join([
+        f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
+        f"Hannah Olala xin gửi anh/chị danh sách đơn hàng của campaign {_camp(m.campaign)}{when} để phục vụ đối soát "
+        "và nghiệm thu.", "", f"Link order: {m.link}", "",
+        "Nhờ anh/chị cập nhật status giao hàng cho từng đơn (Giao thành công / Hoàn / Hủy) vào file trên trước ngày "
+        f"{due}.",
+        "Sau khi brand cập nhật xong, Hannah sẽ tổng hợp số liệu và gửi bảng confirm số cùng biên bản nghiệm thu trong "
+        "luồng mail này.",
+        "Nếu có đơn chưa rõ trạng thái hoặc cần hỗ trợ, anh/chị phản hồi ngay trong mail này giúp Hannah nhé.", "",
+        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)", "Hannah Olala"])
+
+
+def status_reminder_text(m: StatusMail, due: str, signer: str) -> str:
+    """EMAIL 1 — bản nhắc lại (quá hạn chưa cập nhật, reply vào luồng)."""
+    return "\n".join([
+        f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
+        f"Hannah xin nhắc lại: file order campaign {_camp(m.campaign)} hiện vẫn chưa được cập nhật đầy đủ status "
+        f"({m.link}). Anh/chị vui lòng hoàn tất trước ngày {due} để hai bên kịp chốt số nghiệm thu.", "",
+        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)"])
+
+
 # ----------------------------------------------------------------------------------------------- messages
 def _attach(msg: EmailMessage, m: BbntMail) -> None:
     msg.add_attachment(m.attachment, maintype="application",
@@ -281,53 +335,70 @@ def _attach(msg: EmailMessage, m: BbntMail) -> None:
                        filename=m.attachment_name)
 
 
-def cc_for(m: BbntMail) -> list[str]:
-    return [a for a in INTERNAL_CC if a not in m.brand_to]
+def cc_for(brand_to: Sequence[str]) -> list[str]:
+    return [a for a in INTERNAL_CC if a not in brand_to]
 
 
 @dataclass(frozen=True)
 class TestNotes:
     """Kết quả bot sẽ làm ở chế độ thật — in đầu thư test."""
 
-    gate: tuple[str, ...] = ()                 # lý do Audit Gate không đạt (rỗng = đạt)
+    gate: tuple[str, ...] = ()                 # lý do chặn (rỗng = chế độ thật sẽ gửi)
     loopmail: str = ""
     extra: list[str] = field(default_factory=list)
 
 
-def build_test_message(m: BbntMail, settings: EmailSettings, notes: TestNotes | None = None, *,
-                       now: datetime, cal: BusinessCalendar | None = None) -> EmailMessage:
-    """Thư test: To = ``settings.test_to`` duy nhất, không CC. To/CC thật chỉ in trong nội dung."""
+def envelope(settings: EmailSettings, brand_to: Sequence[str], subject_line: str, text: str, *,
+             thread: Thread | None = None, notes: TestNotes | None = None, html_body: str | None = None
+             ) -> EmailMessage:
+    """live: To brand, CC nội bộ; có ``thread`` -> reply (Re:, In-Reply-To/References), không -> luồng mới với
+    ``subject_line``. test: To = ``settings.test_to`` duy nhất, đầu thư ghi To/CC/loopmail mà bản thật sẽ dùng."""
+    msg = EmailMessage()
+    if settings.mode == "live":
+        msg["To"] = ", ".join(brand_to)
+        msg["Cc"] = ", ".join(cc_for(brand_to))
+        if thread is not None:
+            msg["Subject"] = "Re: " + re.sub(r"^\s*(re|fw|fwd)\s*:\s*", "", thread.subject, flags=re.I)
+            if thread.message_ids:
+                msg["In-Reply-To"] = thread.message_ids[-1]
+                msg["References"] = " ".join(thread.message_ids)
+        else:
+            msg["Subject"] = subject_line
+        msg["Message-ID"] = make_msgid(domain="hannaholala.com")
+        msg.set_content(text)
+        if html_body:
+            msg.add_alternative(html_body, subtype="html")
+        return msg
     if settings.mode != "test" or not settings.test_to.endswith(TEST_DOMAIN):
         raise EmailConfigError("Chỉ gửi được ở chế độ test")
     n = notes or TestNotes()
-    msg = EmailMessage()
     msg["To"] = settings.test_to
-    msg["Subject"] = "[TEST] " + m.subject()
+    msg["Subject"] = "[TEST] " + subject_line
     msg.set_content("\n".join([
         "===== BẢN TEST — bot KHÔNG gửi thư này cho brand =====",
-        "Audit Gate: " + ("ĐẠT — chế độ thật sẽ tự gửi" if not n.gate else "KHÔNG ĐẠT: " + ", ".join(n.gate)),
+        "Chế độ thật: " + ("SẼ GỬI" if not n.gate else "CHƯA GỬI — " + ", ".join(n.gate)),
         f"Loopmail: {n.loopmail or '-'}",
-        f"Khi chạy thật sẽ gửi To: {', '.join(m.brand_to)}",
-        f"CC: {', '.join(cc_for(m))}", *n.extra,
-        "=====================================================", "",
-        acceptance_text(m, deadline(now, cal), settings.signer)]))
+        f"Khi chạy thật sẽ gửi To: {', '.join(brand_to)}",
+        f"CC: {', '.join(cc_for(brand_to))}", *n.extra,
+        "=====================================================", "", text]))
+    return msg
+
+
+def build_test_message(m: BbntMail, settings: EmailSettings, notes: TestNotes | None = None, *,
+                       now: datetime, cal: BusinessCalendar | None = None) -> EmailMessage:
+    """Thư test EMAIL 2: To = ``settings.test_to`` duy nhất, không CC."""
+    msg = envelope(settings, m.brand_to, m.subject(), acceptance_text(m, deadline(now, cal), settings.signer),
+                   notes=notes)
     _attach(msg, m)
     return msg
 
 
-def build_live_reply(m: BbntMail, thread: Thread, *, now: datetime, signer: str,
+def build_live_reply(m: BbntMail, thread: Thread | None, *, now: datetime, signer: str,
                      cal: BusinessCalendar | None = None) -> EmailMessage:
-    """Reply vào loopmail: To brand, CC nội bộ, Re: tiêu đề thread, In-Reply-To/References để nối luồng phía brand."""
-    msg = EmailMessage()
-    msg["To"] = ", ".join(m.brand_to)
-    msg["Cc"] = ", ".join(cc_for(m))
-    msg["Subject"] = "Re: " + re.sub(r"^\s*(re|fw|fwd)\s*:\s*", "", thread.subject, flags=re.I)
-    if thread.message_ids:
-        msg["In-Reply-To"] = thread.message_ids[-1]
-        msg["References"] = " ".join(thread.message_ids)
+    """EMAIL 2 thật: reply vào loopmail (``thread``); chưa có loopmail -> luồng mới theo tiêu đề mẫu."""
     due = deadline(now, cal)
-    msg.set_content(acceptance_text(m, due, signer))
-    msg.add_alternative(acceptance_html(m, due, signer), subtype="html")
+    msg = envelope(EmailSettings("live", signer=signer), m.brand_to, m.subject(), acceptance_text(m, due, signer),
+                   thread=thread, html_body=acceptance_html(m, due, signer))
     _attach(msg, m)
     return msg
 

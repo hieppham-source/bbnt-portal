@@ -2,8 +2,8 @@
 API trang /reconcile (dashboard đối soát). Đọc / ghi Postgres của worker (``DATABASE_URL``).
 
 * Cả domain (người đăng nhập portal) được **xem**.
-* Chỉ email trong ``RECON_APPROVERS`` được **duyệt** ô I/K/M (Đổi / Giữ), **Giữ / Tiếp tục** case và
-  **chọn loopmail** khi bot tìm thấy nhiều thread.
+* Chỉ email trong ``RECON_APPROVERS`` được **duyệt** ô I/K/M (Đổi / Giữ), **Giữ / Tiếp tục** case,
+  **chọn loopmail** khi bot tìm thấy nhiều thread và **duyệt thư nhắc** (Gửi / Bỏ).
   Quyền kiểm ở backend, không chỉ ẩn nút.
 * Duyệt "Đổi" chỉ ghi quyết định; lần chạy worker sau mới ghi FB.JT (vẫn đọc lại ô trước khi ghi).
 """
@@ -78,8 +78,26 @@ class ReviewOut(BaseModel):
     created_at: datetime
 
 
+class PendingEmailOut(BaseModel):
+    id: uuid.UUID
+    case_id: uuid.UUID
+    brands: list[str]
+    campaign: str
+    kind: str
+    cycle_no: int
+    to: list[str]
+    cc: list[str]
+    subject: str
+    body: str
+    created_at: datetime
+
+
 class DecisionIn(BaseModel):
     decision: Literal["CHANGE", "KEEP"]
+
+
+class EmailDecisionIn(BaseModel):
+    decision: Literal["SEND", "SKIP"]
 
 
 class LoopmailIn(BaseModel):
@@ -134,6 +152,34 @@ def decide(review_id: int, body: DecisionIn, user: CurrentUser, conn: Conn,
                      (now, who, str(review_id), Jsonb({"value": str(row[2]) if row[2] is not None else None}),
                       Jsonb({"decision": body.decision, "bbnt_value": str(row[3]), "column": row[1],
                              "case_id": str(row[0])})))
+
+
+@router.get("/emails", response_model=list[PendingEmailOut])
+def pending_emails(user: CurrentUser, conn: Conn) -> list[PendingEmailOut]:
+    """Thư bot soạn sẵn chờ duyệt (nhắc brand điền status…). Duyệt -> lần chạy bot sau gửi (trong giờ cho phép)."""
+    rows = conn.execute(
+        "SELECT o.id, o.case_id, c.brand_codes, c.campaign, o.kind, o.cycle_no, o.to_addrs, o.cc_addrs, o.subject, "
+        "o.body_html, o.created_at FROM email_outbox o JOIN recon_case c ON c.id = o.case_id "
+        "WHERE o.status = 'PENDING_REVIEW' ORDER BY o.created_at").fetchall()
+    return [PendingEmailOut(id=r[0], case_id=r[1], brands=r[2], campaign=r[3], kind=r[4], cycle_no=r[5], to=r[6],
+                            cc=r[7], subject=r[8], body=r[9], created_at=r[10]) for r in rows]
+
+
+@router.post("/emails/{email_id}", status_code=204)
+def decide_email(email_id: uuid.UUID, body: EmailDecisionIn, user: CurrentUser, conn: Conn,
+                 settings: Annotated[Settings, Depends(get_settings)]) -> None:
+    """``SEND`` -> QUEUED (bot gửi lần chạy sau); ``SKIP`` -> CANCELLED."""
+    who = _approver(user, settings)
+    with conn.transaction():
+        row = conn.execute("UPDATE email_outbox SET status = %s, approved_by = %s, approved_at = now() "
+                           "WHERE id = %s AND status = 'PENDING_REVIEW' RETURNING case_id, kind",
+                           ("QUEUED" if body.decision == "SEND" else "CANCELLED", who, email_id)).fetchone()
+        if row is None:
+            raise HTTPException(409, detail={"code": "EMAIL_ALREADY_DECIDED", "message": "Thư này đã được xử lý"})
+        conn.execute("INSERT INTO audit_log (at, actor, action, entity, entity_id, after) "
+                     "VALUES (now(), %s, 'EMAIL_REVIEW', 'email_outbox', %s, %s)",
+                     (who, str(email_id), Jsonb({"decision": body.decision, "kind": row[1],
+                                                 "case_id": str(row[0])})))
 
 
 @router.post("/cases/{case_id}/loopmail", status_code=204)
