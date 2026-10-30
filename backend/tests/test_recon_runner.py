@@ -30,7 +30,7 @@ def conn() -> Iterator[psycopg.Connection]:
     assert psql("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").returncode == 0
     run_file("0001_recon_init.up.sql")
     run_file("0002_recon_idempotency.up.sql")
-    run_file("0003_recon_email_test.up.sql")
+    run_file("0003_recon_email.up.sql")
     with psycopg.connect(URL or "", autocommit=True) as c:
         yield c
 
@@ -167,64 +167,123 @@ def test_out_of_scope_case_keeps_planned_writes_unexecuted(conn, run):
     assert st.written == 0 and one(conn, "SELECT count(*) FROM sheet_write WHERE status = 'PLANNED'")[0] == 3
 
 
-# --------------------------------------------------------------------------------------------- email test
-def _send_ok(sent):
-    def send(msg):
-        sent.append(msg)
-        return f"gm{len(sent)}"
-    return send
+# --------------------------------------------------------------------------------------------- email nghiệm thu
+TEMPLATE = ("INSERT INTO email_template (code, version, status, subject, body_html, approved_by, approved_at) VALUES "
+            "('ACCEPTANCE', 1, 'APPROVED', 's', '<p>Gửi {brands}: BBNT {bbnt_number}, hoa hồng {commission}</p>', "
+            "'hiep.pham@hannaholala.com', now())")
 
 
-def test_test_email_sent_once_per_case_and_audited(conn, run):
+def _email(conn, plans, run_id, st, gmail, env, mail=None):
     from app.recon.emailer import EmailSettings
-    from app.recon.runner import send_test_emails
+    from app.recon.runner import send_acceptance_emails
 
-    from .test_recon_email import MAIL, TEST
-    settings, sent = EmailSettings.from_env(TEST), []
+    from .test_recon_email import MAIL
+    send_acceptance_emails(conn, plans, lambda p, at: mail or MAIL, gmail, EmailSettings.from_env(env), now=NOW,
+                           run_id=run_id, st=st)
+
+
+def _figures_written(conn, run):
+    plans, _, _ = go(conn, run, row(*ORG))
+    t = {c.column: c.target for c in plans[0].cells}
+    plans, st, run_id = go(conn, run, row(*ORG, nmv=t["nmv"], k=t["commission"], gmv=t["gmv"]))
+    assert one(conn, "SELECT state FROM recon_case") == ("FIGURES_WRITTEN",)
+    return plans, st, run_id
+
+
+def test_test_email_sent_once_per_case_with_gate_notes(conn, run):
+    from .test_recon_email import TEST, FakeGmail
+    gmail = FakeGmail()
     plans, st, run_id = go(conn, run, row(*ORG))
-    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok(sent), settings, now=NOW, run_id=run_id, st=st)
-    assert st.emails_sent == 1 and [m["To"] for m in sent] == ["hiep.pham@hannaholala.com"]
+    _email(conn, plans, run_id, st, gmail, TEST)
+    [(msg, thread)] = gmail.sent
+    assert st.emails_sent == 1 and msg["To"] == "hiep.pham@hannaholala.com" and thread is None
+    text = msg.get_body(("plain",)).get_content()
+    assert "KHÔNG ĐẠT: FIGURES_MISMATCH_FBJT" in text and "thread t1" in text
     assert one(conn, "SELECT status, to_addrs, cc_addrs FROM email_outbox") == ("SENT", ["hiep.pham@hannaholala.com"],
                                                                                [])
+    assert one(conn, "SELECT state, gmail_thread_id, email_reasons FROM recon_case") == (
+        "BBNT_DRAFTED", "t1", ["FIGURES_MISMATCH_FBJT"])                     # test không đổi trạng thái
     assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'EMAIL_SEND'")[0] == 1
-    assert one(conn, "SELECT state FROM recon_case") == ("BBNT_DRAFTED",)            # test không đổi trạng thái
     plans, st, run_id = go(conn, run, row(*ORG))
-    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok(sent), settings, now=NOW, run_id=run_id, st=st)
-    assert st.emails_sent == 0 and len(sent) == 1                                     # chạy lại không gửi trùng
+    _email(conn, plans, run_id, st, gmail, TEST)
+    assert st.emails_sent == 0 and len(gmail.sent) == 1                       # chạy lại không gửi trùng
 
 
-def test_test_email_failure_is_recorded_not_retried_and_off_mode_sends_nothing(conn, run):
-    from app.recon.emailer import EmailSettings
-    from app.recon.runner import send_test_emails
-
-    from .test_recon_email import MAIL, TEST
+def test_email_failure_recorded_not_retried_and_off_mode_sends_nothing(conn, run):
+    from .test_recon_email import TEST, FakeGmail
     plans, st, run_id = go(conn, run, row(*ORG))
-    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok([]), EmailSettings("off"), now=NOW, run_id=run_id,
-                     st=st)
+    _email(conn, plans, run_id, st, FakeGmail(), {})
+    assert one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
+    _email(conn, plans, run_id, st, FakeGmail(fail=True), TEST)
+    assert st.emails_failed == 1 and one(conn, "SELECT status, last_error FROM email_outbox") == ("FAILED",
+                                                                                                   "RuntimeError")
+    again = FakeGmail()
+    _email(conn, plans, run_id, st, again, TEST)
+    assert again.sent == []
+
+
+def test_email_skip_reason_and_limit(conn, run):
+    from .test_recon_email import TEST, FakeGmail
+    plans, st, run_id = go(conn, run, row(*ORG))
+    _email(conn, plans, run_id, st, FakeGmail(), TEST, mail="NO_BRAND_EMAIL")
+    assert st.email_skipped == {"NO_BRAND_EMAIL": 1} and one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
+    assert one(conn, "SELECT email_reasons FROM recon_case") == (["NO_BRAND_EMAIL"],)
+    st.email_skipped.clear()
+    _email(conn, plans, run_id, st, FakeGmail(), {**TEST, "RECON_EMAIL_MAX": "0"})
+    assert st.email_skipped == {"MAX_PER_RUN": 1}
+
+
+def test_live_needs_figures_written_and_approved_template(conn, run):
+    from .test_recon_email import LIVE, FakeGmail
+    gmail = FakeGmail()
+    plans, st, run_id = go(conn, run, row(*ORG))
+    _email(conn, plans, run_id, st, gmail, LIVE)
+    assert gmail.sent == [] and one(conn, "SELECT email_reasons FROM recon_case") == (
+        ["FIGURES_MISMATCH_FBJT", "TEMPLATE_NOT_CONFIGURED"],)
     assert one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
 
-    def boom(msg):
-        raise TimeoutError
-    send_test_emails(conn, plans, lambda p, at: MAIL, boom, EmailSettings.from_env(TEST), now=NOW, run_id=run_id,
-                     st=st)
-    assert st.emails_failed == 1 and one(conn, "SELECT status, last_error FROM email_outbox") == ("FAILED",
-                                                                                                   "TimeoutError")
-    sent: list = []
-    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok(sent), EmailSettings.from_env(TEST), now=NOW,
-                     run_id=run_id, st=st)
-    assert sent == []
 
-
-def test_test_email_skips_with_reason_and_respects_limit(conn, run):
-    from app.recon.emailer import EmailSettings
-    from app.recon.runner import send_test_emails
-
-    from .test_recon_email import MAIL, TEST
+def test_live_replies_into_loopmail_once_and_moves_case(conn, run):
+    from .test_recon_email import LIVE, FakeGmail
+    conn.execute(TEMPLATE)
+    plans, st, run_id = _figures_written(conn, run)
+    gmail = FakeGmail()
+    _email(conn, plans, run_id, st, gmail, LIVE)
+    [(msg, thread)] = gmail.sent
+    assert thread == "t1" and msg["To"] == "kt@brand.vn" and "fb@hannaholala.com" in msg["Cc"]
+    assert msg["In-Reply-To"] == "<b@x>" and msg["References"] == "<a@x> <b@x>"
+    assert msg["Subject"] == "Re: BBNT BDAY T5"
+    assert "BBNT 10.26/BBNT-X, hoa hồng 216.000 đ" in msg.get_body(("html",)).get_content()
+    assert one(conn, "SELECT state, email_reasons FROM recon_case") == ("ACCEPTANCE_SENT", [])
+    assert one(conn, "SELECT direction, gmail_thread_id FROM email_message") == ("OUT", "t1")
     plans, st, run_id = go(conn, run, row(*ORG))
-    send_test_emails(conn, plans, lambda p, at: "NO_BRAND_EMAIL", _send_ok([]), EmailSettings.from_env(TEST),
-                     now=NOW, run_id=run_id, st=st)
-    assert st.email_skipped == {"NO_BRAND_EMAIL": 1} and one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
-    st.email_skipped.clear()
-    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok([]), EmailSettings.from_env({**TEST,
-                     "RECON_EMAIL_MAX": "0"}), now=NOW, run_id=run_id, st=st)
-    assert st.email_skipped == {"MAX_PER_RUN": 1}
+    _email(conn, plans, run_id, st, gmail, LIVE)
+    assert len(gmail.sent) == 1 and st.untouched == 1                         # đã gửi: bot không chạm nữa
+
+
+def test_live_ambiguous_loopmail_waits_for_kam_then_sends(conn, run):
+    from app.recon.emailer import Thread
+
+    from .test_recon_email import LIVE, FakeGmail
+    conn.execute(TEMPLATE)
+    plans, st, run_id = _figures_written(conn, run)
+    gmail = FakeGmail(extra=[Thread("t2", "BBNT BDAY T5", ["<c@x>"], frozenset({"kt@brand.vn"}))])
+    _email(conn, plans, run_id, st, gmail, LIVE)
+    assert gmail.sent == [] and one(conn, "SELECT email_reasons FROM recon_case") == (["LOOPMAIL_NOT_UNIQUE"],)
+    assert [c["id"] for c in one(conn, "SELECT loopmail_candidates FROM recon_case")[0]] == ["t1", "t2"]
+    conn.execute("UPDATE recon_case SET gmail_thread_id = 't2', loopmail_candidates = NULL")   # KAM chọn (API)
+    _email(conn, plans, run_id, st, gmail, LIVE)
+    assert [t for _, t in gmail.sent] == ["t2"]
+
+
+def test_live_outside_send_window_waits(conn, run):
+    from app.recon.emailer import EmailSettings
+    from app.recon.runner import send_acceptance_emails
+
+    from .test_recon_email import LIVE, MAIL, FakeGmail
+    conn.execute(TEMPLATE)
+    plans, st, run_id = _figures_written(conn, run)
+    gmail = FakeGmail()
+    send_acceptance_emails(conn, plans, lambda p, at: MAIL, gmail, EmailSettings.from_env(LIVE),
+                           now=datetime(2026, 10, 31, 3, 0, tzinfo=UTC), run_id=run_id, st=st)   # thứ Bảy
+    assert gmail.sent == [] and one(conn, "SELECT email_reasons FROM recon_case") == (["OUTSIDE_SEND_WINDOW"],)

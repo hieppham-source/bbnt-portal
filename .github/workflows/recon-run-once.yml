@@ -1,11 +1,13 @@
 # Worker đối soát — run-once: lập kế hoạch trên dữ liệu Google thật, LƯU trạng thái vào Postgres (idempotent).
 # Ghi ô I/K/M lên FB.JT CHỈ khi Variables RECON_SHEET_WRITE=on VÀ RECON_SHEET_WRITE_ID = RECON_FBJT_ID
-# (thử trên bản sao FB.JT trước). Email: chỉ chế độ test (RECON_EMAIL_MODE=test) — thư BBNT chỉ tới
-# RECON_EMAIL_TEST_TO (@hannaholala.com), không bao giờ tới brand. Log chỉ có số đếm. Chạy tay: Actions -> recon-run-once.
+# (thử trên bản sao FB.JT trước). Email: RECON_EMAIL_MODE=off|test|live (test: chỉ tới RECON_EMAIL_TEST_TO; live: reply
+# loopmail khi Audit Gate đạt + mẫu ACCEPTANCE đã duyệt). Lịch 30 phút/lần chỉ khi RECON_SCHEDULE=on. Log chỉ có số đếm. Chạy tay: Actions -> recon-run-once.
 name: recon-run-once
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 1-12 * * 1-5"   # 08:00–19:30 giờ VN, T2–T6; chỉ chạy khi Variable RECON_SCHEDULE=on
 
 concurrency:
   group: recon-worker
@@ -16,6 +18,7 @@ permissions:
 
 jobs:
   run-once:
+    if: github.event_name != 'schedule' || vars.RECON_SCHEDULE == 'on'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:

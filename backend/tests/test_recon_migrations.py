@@ -97,9 +97,9 @@ def test_0002_down_then_up(fresh_db: None) -> None:
 
 
 def test_0003_seeds_test_template_and_down_up_is_clean(fresh_db: None) -> None:
-    run_file("0003_recon_email_test.up.sql")
-    run_file("0003_recon_email_test.up.sql")                    # chạy lại không lỗi
+    run_file("0003_recon_email.up.sql")
+    run_file("0003_recon_email.up.sql")                    # chạy lại không lỗi
     assert psql("SELECT status FROM email_template WHERE code = 'ACCEPTANCE_TEST';").stdout.strip() \
         == "NOT_CONFIGURED"
-    run_file("0003_recon_email_test.down.sql")
+    run_file("0003_recon_email.down.sql")
     assert psql("SELECT count(*) FROM email_template;").stdout.strip() == "0"

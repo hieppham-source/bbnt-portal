@@ -12,8 +12,13 @@ from app.recon.emailer import (
     BbntMail,
     EmailConfigError,
     EmailSettings,
+    Thread,
+    build_live_reply,
     build_test_message,
+    find_loopmail,
+    in_send_window,
     recipients,
+    render_template,
     split_addresses,
     subject,
 )
@@ -27,15 +32,38 @@ from .test_recon_worker import ORDERS, ORG, row, sheet
 
 run = tw.run
 TEST = {"RECON_EMAIL_MODE": "test", "RECON_EMAIL_TEST_TO": "Hiep.Pham@hannaholala.com"}
+LIVE = {"RECON_EMAIL_MODE": "live"}
+LOOP = Thread("t1", "RE: BBNT BDAY T5", ["<a@x>", "<b@x>"], frozenset({"kt@brand.vn", "hiep.pham@hannaholala.com"}))
+
+
+class FakeGmail:
+    """Gmail giả: thread t1 khớp loopmail (+ ``extra``), 1 thread lạc đề; ``send`` ghi lại thư."""
+
+    def __init__(self, extra=(), fail=False):
+        self.threads = {t.id: t for t in (LOOP, Thread("x9", "Khác", [], frozenset({"kt@brand.vn"})), *extra)}
+        self.fail, self.sent = fail, []
+
+    def search(self, title):
+        return list(self.threads)
+
+    def thread(self, thread_id):
+        return self.threads[thread_id]
+
+    def send(self, msg, thread_id=None):
+        if self.fail:
+            raise RuntimeError("Gmail HTTP 500")
+        self.sent.append((msg, thread_id))
+        return f"gm{len(self.sent)}", thread_id or "new"
 MAIL = BbntMail("ORGANICA", ["ORGANICA"], "EZS", "BBNT BDAY T5", "BDAY - 05/2026", "10.26/BBNT-X", "01/2026/HĐ",
                 Decimal(1_000_000), Decimal(216_000), Decimal(1_200_000), ["kt@brand.vn"], "BBNT_x.docx", b"PK")
 
 
-def test_settings_default_off_and_rejects_live_or_outside_address():
+def test_settings_default_off_and_rejects_bad_mode_or_outside_address():
     assert EmailSettings.from_env({}).mode == "off"
     s = EmailSettings.from_env(TEST)
     assert (s.mode, s.test_to, s.max_per_run) == ("test", "hiep.pham@hannaholala.com", 5)
-    for bad in ({"RECON_EMAIL_MODE": "live"}, {**TEST, "RECON_EMAIL_TEST_TO": "kt@brand.vn"},
+    assert EmailSettings.from_env(LIVE) == EmailSettings("live", "", 5)
+    for bad in ({"RECON_EMAIL_MODE": "send"}, {**TEST, "RECON_EMAIL_TEST_TO": "kt@brand.vn"},
                 {**TEST, "RECON_EMAIL_TEST_TO": "a@hannaholala.com,b@hannaholala.com"},
                 {"RECON_EMAIL_MODE": "test"}, {**TEST, "RECON_EMAIL_MAX": "x"}):
         with pytest.raises(EmailConfigError):
@@ -86,3 +114,27 @@ def test_mail_for_renders_docx_and_reports_missing_email(run, master_tables):
     assert worker.mail_for(p, tw.NOW, by_row, {}, render) == "NO_BRAND_EMAIL"
     assert worker.mail_for(p, tw.NOW, by_row, {"organica": "sai"}, render) == "BRAND_EMAIL_INVALID"
     assert worker.mail_for(p, tw.NOW, by_row, {"organica": "a@b.vn"}, lambda *_: None) == "RENDER_FAILED"
+
+
+def test_loopmail_match_needs_title_and_brand_participant():
+    assert [t.id for t in find_loopmail(FakeGmail(), "bbnt  bday t5", ["kt@brand.vn"])] == ["t1"]
+    assert find_loopmail(FakeGmail(), "BBNT BDAY T5", ["khac@brand.vn"]) == []
+    assert find_loopmail(FakeGmail(), "BBNT BDAY", ["kt@brand.vn"]) == []
+
+
+def test_live_reply_and_template():
+    html = render_template("<p>{brands} {bbnt_number} {nmv}</p>", MAIL)
+    assert html == "<p>ORGANICA 10.26/BBNT-X 1.000.000 đ</p>"
+    with pytest.raises(KeyError):
+        render_template("{unknown}", MAIL)
+    msg = build_live_reply(MAIL, LOOP, html)
+    assert recipients(msg)[0] == "kt@brand.vn" and set(recipients(msg)[1:]) == set(INTERNAL_CC)
+    assert msg["Subject"] == "Re: BBNT BDAY T5" and msg["In-Reply-To"] == "<b@x>"
+    assert len(list(msg.iter_attachments())) == 1
+
+
+def test_send_window_is_weekday_office_hours_vn():
+    from datetime import UTC, datetime
+    assert in_send_window(datetime(2026, 10, 28, 2, 0, tzinfo=UTC))             # T4 09:00 VN
+    assert not in_send_window(datetime(2026, 10, 28, 12, 0, tzinfo=UTC))        # T4 19:00 VN
+    assert not in_send_window(datetime(2026, 10, 31, 3, 0, tzinfo=UTC))         # T7

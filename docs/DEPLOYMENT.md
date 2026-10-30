@@ -47,7 +47,7 @@ khi chọn `report=true`. Lỗi bất ngờ chỉ in tên lỗi (ẩn chi tiết
 
 ## Migration
 
-Áp dụng tay theo thứ tự (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`, rồi `0002_recon_idempotency.up.sql`, rồi `0003_recon_email_test.up.sql`. CI job `migrations` chạy cả ba. Rollback: xem `OPERATIONS_RUNBOOK.md`.
+Áp dụng tay theo thứ tự (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`, rồi `0002_recon_idempotency.up.sql`, rồi `0003_recon_email.up.sql`. CI job `migrations` chạy cả ba. Rollback: xem `OPERATIONS_RUNBOOK.md`.
 
 ## Bật ghi I/K/M (thứ tự bắt buộc)
 

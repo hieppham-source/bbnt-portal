@@ -25,15 +25,23 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app.recon.audit_gate import AcceptanceFacts, evaluate_acceptance
 from app.recon.db import CaseState, NewCase, apply_transition, create_case
 from app.recon.emailer import (
     KIND,
+    LIVE_KIND,
     BbntMail,
     EmailConfigError,
     EmailSettings,
+    TestNotes,
+    Thread,
     body,
+    build_live_reply,
     build_test_message,
+    find_loopmail,
+    in_send_window,
     recipients,
+    render_template,
 )
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key
 from app.recon.rules import CellAction, entity_code
@@ -201,21 +209,33 @@ def _jsonable(v: Any) -> Any:
     return v if v is None or isinstance(v, (int, float, str, bool)) else str(v)
 
 
-def send_test_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
-                     build: Callable[[CasePlan, datetime], BbntMail | str], send: Callable[[EmailMessage], str],
-                     settings: EmailSettings, *, now: datetime, run_id: uuid.UUID, st: RunStats) -> None:
-    """Chế độ test: mỗi case BBNT_DRAFTED / FIGURES_WRITTEN của lần chạy này nhận ĐÚNG 1 thư test (``email_outbox``
-    UNIQUE theo case + kind). Không đổi trạng thái case. Thư FAILED không tự gửi lại."""
-    if settings.mode != "test":
+def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
+                           build: Callable[[CasePlan, datetime], BbntMail | str], gmail: Any,
+                           settings: EmailSettings, *, now: datetime, run_id: uuid.UUID, st: RunStats) -> None:
+    """Email nghiệm thu cho case BBNT_DRAFTED / FIGURES_WRITTEN của lần chạy này.
+
+    * Tìm loopmail (TITLE MAIL + email brand) -> lưu ``gmail_thread_id``; 0 / nhiều thread -> ``loopmail_candidates``
+      để KAM chọn trên portal. Kết quả Audit Gate lưu ``recon_case.email_reasons`` (không đổi trạng thái case).
+    * test: mỗi case ĐÚNG 1 thư về ``RECON_EMAIL_TEST_TO`` (kể cả Audit không đạt — thư ghi lý do).
+    * live: chỉ khi Audit đạt; reply vào loopmail; case -> ACCEPTANCE_SENT. ``email_outbox`` UNIQUE theo case + loại:
+      không bao giờ gửi 2 lần; thư FAILED không tự gửi lại (xem OPERATIONS_RUNBOOK)."""
+    if settings.mode == "off":
         return
+    live = settings.mode == "live"
+    kind = LIVE_KIND if live else KIND
+    template: str | None = None
+    if live:
+        row = conn.execute("SELECT body_html FROM email_template WHERE code = 'ACCEPTANCE' AND status = 'APPROVED' "
+                           "ORDER BY version DESC LIMIT 1").fetchone()
+        template = row[0] if row else None
     by_sid = {p.order_sheet_id: p for p in plans if p.action is Action.DRAFT and p.order_sheet_id}
     todo = conn.execute(
-        "SELECT c.id, c.order_sheet_id, c.bbnt_issued_at FROM recon_case c WHERE c.last_run_id = %s "
-        "AND c.state IN ('BBNT_DRAFTED', 'FIGURES_WRITTEN') AND c.bbnt_issued_at IS NOT NULL "
+        "SELECT c.id, c.order_sheet_id, c.bbnt_issued_at, c.state, c.gmail_thread_id FROM recon_case c "
+        "WHERE c.last_run_id = %s AND c.state IN ('BBNT_DRAFTED', 'FIGURES_WRITTEN') AND c.bbnt_issued_at IS NOT NULL "
         "AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.case_id = c.id AND o.kind = %s) "
-        "ORDER BY c.updated_at, c.id", (run_id, KIND)).fetchall()
+        "ORDER BY c.updated_at, c.id", (run_id, kind)).fetchall()
     skip = st.email_skipped
-    for case_id, sid, issued_at in todo:
+    for case_id, sid, issued_at, state, thread_id in todo:
         p = by_sid.get(sid)
         if p is None:
             continue
@@ -225,29 +245,89 @@ def send_test_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
         mail = build(p, issued_at)
         if isinstance(mail, str):
             skip[mail] = skip.get(mail, 0) + 1
+            conn.execute("UPDATE recon_case SET email_reasons = %s WHERE id = %s", ([mail], case_id))
             continue
-        msg = build_test_message(mail, settings)
-        if recipients(msg) != [settings.test_to]:            # chốt chặn cuối: không bao giờ gửi brand
-            raise EmailConfigError("Thư test có người nhận ngoài RECON_EMAIL_TEST_TO")
-        oid = uuid.uuid4()
-        with conn.transaction():
-            if conn.execute(
-                    "INSERT INTO email_outbox (id, case_id, kind, cycle_no, idempotency_key, template_code, "
-                    "template_version, to_addrs, subject, body_html, status, attempts, created_at) "
-                    "VALUES (%s, %s, %s, 1, %s, %s, 1, %s, %s, %s, 'SENDING', 1, %s) ON CONFLICT DO NOTHING",
-                    (oid, case_id, KIND, f"{case_id}:{KIND}:1", KIND, [settings.test_to], msg["Subject"],
-                     body(mail), now)).rowcount == 0:
-                continue
+        extra: list[str] = []
+        threads: list[Thread] = []
         try:
-            gmail_id, status, error = send(msg), "SENT", None
-        except Exception as exc:  # noqa: BLE001 — ghi lỗi, không dừng cả lần chạy
-            gmail_id, status, error = None, "FAILED", type(exc).__name__
-        with conn.transaction():
-            conn.execute("UPDATE email_outbox SET status = %s, last_error = %s WHERE id = %s", (status, error, oid))
-            conn.execute(
-                "INSERT INTO audit_log (at, actor, action, entity, entity_id, before, after, run_id) "
-                "VALUES (%s, %s, 'EMAIL_SEND', 'email_outbox', %s, NULL, %s, %s)",
-                (now, ACTOR, str(oid), Jsonb({"mode": "TEST", "status": status, "gmail_id": gmail_id,
-                                              "case_id": str(case_id), "error": error}), run_id))
-        st.emails_sent += status == "SENT"
-        st.emails_failed += status == "FAILED"
+            if not mail.title:
+                extra.append("TITLE_MAIL_MISSING")
+            elif thread_id:
+                threads = [gmail.thread(thread_id)]                 # KAM đã chọn / đã tìm thấy lần trước
+            else:
+                threads = find_loopmail(gmail, mail.title, mail.brand_to)
+        except RuntimeError:
+            extra.append("GMAIL_LOOKUP_FAILED")
+        if len(threads) == 1 and not thread_id:
+            conn.execute("UPDATE recon_case SET gmail_thread_id = %s, loopmail_rfc822_id = %s, "
+                         "loopmail_candidates = NULL WHERE id = %s",
+                         (threads[0].id, next(iter(threads[0].message_ids), None), case_id))
+        elif len(threads) > 1:
+            conn.execute("UPDATE recon_case SET loopmail_candidates = %s WHERE id = %s",
+                         (Jsonb([t.summary() for t in threads]), case_id))
+        html_body = None
+        if live and template is not None:
+            try:
+                html_body = render_template(template, mail)
+            except (KeyError, ValueError, IndexError):
+                extra.append("TEMPLATE_INVALID")
+        gate = evaluate_acceptance(AcceptanceFacts(
+            non_op=True, order_links_found=1, order_link_readable=True, contracts_found=1,     # đã kiểm ở plan_cases
+            contract_in_portal_master=True, generator_errors=0, figures_match_sheet=state == "FIGURES_WRITTEN",
+            brand_emails=len(mail.brand_to), loopmail_threads_found=len(threads), already_sent=False,
+            template_configured=not live or template is not None, within_send_window=in_send_window(now),
+            on_hold=False)).reasons + tuple(extra)
+        conn.execute("UPDATE recon_case SET email_reasons = %s WHERE id = %s", (list(gate), case_id))
+        if live and gate:
+            for r in gate:
+                skip[r] = skip.get(r, 0) + 1
+            continue
+        if live:
+            assert html_body is not None
+            msg, to_thread = build_live_reply(mail, threads[0], html_body), threads[0]
+        else:
+            loop = (f"{len(threads)} thread khớp" if len(threads) != 1 else f"thread {threads[0].id} — "
+                    f"{threads[0].subject}")
+            msg, to_thread = build_test_message(mail, settings, TestNotes(gate, loop)), None
+            if recipients(msg) != [settings.test_to]:          # chốt chặn cuối: thư test không bao giờ tới brand
+                raise EmailConfigError("Thư test có người nhận ngoài RECON_EMAIL_TEST_TO")
+        _send_one(conn, case_id, kind, msg, to_thread, gmail, mail, now=now, run_id=run_id, st=st)
+
+
+def _send_one(conn: psycopg.Connection, case_id: uuid.UUID, kind: str, msg: EmailMessage, thread: Thread | None,
+              gmail: Any, mail: BbntMail, *, now: datetime, run_id: uuid.UUID, st: RunStats) -> None:
+    oid = uuid.uuid4()
+    with conn.transaction():
+        if conn.execute(
+                "INSERT INTO email_outbox (id, case_id, kind, cycle_no, idempotency_key, template_code, "
+                "template_version, to_addrs, cc_addrs, subject, body_html, reply_to_thread_id, status, attempts, "
+                "created_at) VALUES (%s, %s, %s, 1, %s, %s, 1, %s, %s, %s, %s, %s, 'SENDING', 1, %s) "
+                "ON CONFLICT DO NOTHING",
+                (oid, case_id, kind, f"{case_id}:{kind}:1", kind,
+                 [a.strip() for a in (msg["To"] or "").split(",") if a.strip()],
+                 [a.strip() for a in (msg["Cc"] or "").split(",") if a.strip()], msg["Subject"], body(mail),
+                 thread.id if thread else None, now)).rowcount == 0:
+            return
+    try:
+        (gmail_id, thread_id), status, error = gmail.send(msg, thread.id if thread else None), "SENT", None
+    except Exception as exc:  # noqa: BLE001 — ghi lỗi, không dừng cả lần chạy
+        gmail_id, thread_id, status, error = None, None, "FAILED", type(exc).__name__
+    with conn.transaction():
+        conn.execute("UPDATE email_outbox SET status = %s, last_error = %s WHERE id = %s", (status, error, oid))
+        if status == "SENT" and thread is not None:                 # live: thư thuộc loopmail + case đã gửi
+            conn.execute("INSERT INTO email_message (gmail_message_id, gmail_thread_id, mailbox, case_id, direction, "
+                         "sent_at, outbox_id) VALUES (%s, %s, 'me', %s, 'OUT', %s, %s) ON CONFLICT DO NOTHING",
+                         (gmail_id, thread_id or thread.id, case_id, now, oid))
+            cur = conn.execute("SELECT id, state, state_version, held_from FROM recon_case WHERE id = %s",
+                               (case_id,)).fetchone()
+            assert cur is not None
+            apply_transition(conn, CaseState(cur[0], State(cur[1]), cur[2], None), transition(
+                State(cur[1]), State.ACCEPTANCE_SENT, trigger=Trigger.WORKER, actor=ACTOR, at=now,
+                reason="email nghiệm thu"))
+        conn.execute(
+            "INSERT INTO audit_log (at, actor, action, entity, entity_id, before, after, run_id) "
+            "VALUES (%s, %s, 'EMAIL_SEND', 'email_outbox', %s, NULL, %s, %s)",
+            (now, ACTOR, str(oid), Jsonb({"kind": kind, "status": status, "gmail_id": gmail_id, "thread_id": thread_id,
+                                          "case_id": str(case_id), "error": error}), run_id))
+    st.emails_sent += status == "SENT"
+    st.emails_failed += status == "FAILED"

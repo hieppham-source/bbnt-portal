@@ -9,7 +9,7 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 |---|---|
 | Biến GitHub | `RECON_FBJT_ID` = `RECON_SHEET_WRITE_ID` = ID bản sao; `RECON_SHEET_WRITE=on`; `RECON_EMAIL_MODE=test`; `RECON_EMAIL_TEST_TO=hiep.pham@hannaholala.com`; `RECON_EMAIL_MAX=5` |
 | Secret | `DATABASE_URL` = branch `test-write` (đã đổi mật khẩu sau lần lộ) |
-| Migration | Neon SQL Editor (branch `test-write`): chạy nội dung `backend/migrations/0003_recon_email_test.up.sql` |
+| Migration | Neon SQL Editor (branch `test-write`): chạy nội dung `backend/migrations/0003_recon_email.up.sql` |
 | Làm sạch DB test | `TRUNCATE recon_case, sheet_row, sheet_write, cell_review, email_outbox, state_transition, workflow_run, audit_log CASCADE;` (CHỈ branch test) |
 | Render | Tạm trỏ `DATABASE_URL` của backend về `test-write` để dashboard đọc cùng DB |
 
@@ -72,12 +72,31 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 | 38 | Chạy lại | Không gửi thư trùng | |
 | 39 | > 5 ca DRAFT | Chỉ 5 thư, còn lại `MAX_PER_RUN`; lần sau gửi tiếp | |
 | 40 | Số NMV/hoa hồng/GMV trong thư | Khớp file .docx và I/K/M | |
-| 41 | `RECON_EMAIL_MODE=live` | Workflow báo lỗi cấu hình, không làm gì | |
+| 41 | `RECON_EMAIL_MODE=abc` | Workflow báo lỗi cấu hình, không làm gì | |
+| 42 | Thư test của ca đã ghi I/K/M + TITLE MAIL đúng | Đầu thư: "Audit Gate: ĐẠT", loopmail = đúng thread | |
+| 43 | 2 thread cùng TITLE MAIL | Dashboard: "Chọn loopmail" 2 nút; chọn 1 → lần sau dùng thread đó | |
+| 44 | TITLE MAIL trống | Email chưa gửi: `TITLE_MAIL_MISSING` | |
+
+## 4b. Email thật (`live`) — chỉ sau khi duyệt mẫu, thử với 1 brand nội bộ / brand đồng ý thử
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 45 | Chưa có mẫu `ACCEPTANCE` APPROVED | Không gửi; `TEMPLATE_NOT_CONFIGURED` | |
+| 46 | Ca FIGURES_WRITTEN, đủ điều kiện, trong giờ | Reply vào đúng loopmail, To brand, CC nội bộ; case → Đã gửi nghiệm thu | |
+| 47 | Chạy lại | Không gửi lần 2 | |
+| 48 | Ngoài giờ / thứ Bảy | `OUTSIDE_SEND_WINDOW`, gửi ở lần chạy trong giờ kế tiếp | |
+| 49 | Ca mới lập BBNT, chưa ghi I/K/M | `FIGURES_MISMATCH_FBJT`, không gửi | |
+
+## 4c. Lịch
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 50 | `RECON_SCHEDULE=on` | Workflow tự chạy 30 phút/lần trong giờ hành chính; `off` → không chạy | |
 
 ## 5. Trước khi chuyển sang thật
 
-- [ ] Toàn bộ 41 dòng ✅.
-- [ ] Duyệt mẫu thư (Q1) — chế độ gửi brand thật **chưa có**; làm sau khi duyệt mẫu + cách tìm loopmail.
-- [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.
+- [ ] Toàn bộ 50 dòng ✅.
+- [ ] Duyệt mẫu thư `ACCEPTANCE` (Q1) và thêm vào DB (OPERATIONS_RUNBOOK → Email nghiệm thu).
+- [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `RECON_SCHEDULE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.
 - [ ] Chạy migration `0003` trên Neon main.
 - [ ] Lần đầu trên FB.JT thật: run-once **không ghi** → đọc báo cáo → mới bật ghi.

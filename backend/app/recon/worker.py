@@ -296,7 +296,7 @@ def mail_for(p: CasePlan, issued_at: datetime, rows: Mapping[int, FbjtRow], bran
         return "BBNT_NUMBER_CHANGED"
     first = rows[p.rows[0]]
     filename = "BBNT_" + re.sub(r'[\\/:*?"<>|\s]+', "_", str(r.number)) + ".docx"   # như API tải BBNT
-    return BbntMail(first.group, p.brands, r.entity.code, first.title_mail or p.campaign, p.campaign,
+    return BbntMail(first.group, p.brands, r.entity.code, first.title_mail, p.campaign,
                     str(r.number), r.contract.contract_no, r.nmv_vnd, _commission_k(r), r.gmv_vnd,
                     list(dict.fromkeys(to)), filename, r.content)
 
@@ -399,13 +399,13 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
     import psycopg
     import requests
 
-    from app.recon.emailer import EmailSettings, gmail_send
+    from app.recon.emailer import EmailSettings, GmailApi
     from app.recon.fbjt import WRITABLE
     from app.recon.google_bot import BotConfigError
     from app.recon.runner import (
         LOCK_KEY,
         persist,
-        send_test_emails,
+        send_acceptance_emails,
         stored_issued_at,
         write_back,
     )
@@ -434,8 +434,9 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
             if write_ok:
                 write_back(conn, lambda ws: write_cells(s, fbjt_id, tab, ws),
                            {k: outcome.columns.letter(k) for k in WRITABLE}, now=now, run_id=run_id, st=st)
-            send_test_emails(conn, plans, lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
-                             lambda m: gmail_send(s, m), mail, now=now, run_id=run_id, st=st)
+            send_acceptance_emails(conn, plans,
+                                   lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
+                                   GmailApi(s), mail, now=now, run_id=run_id, st=st)
             conn.execute("UPDATE workflow_run SET finished_at = now(), status = 'OK', rows_scanned = %s WHERE id = %s",
                          (len(outcome.rows), run_id))
         except Exception as exc:
@@ -447,9 +448,9 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
         f"bot không chạm {st.untouched}, ô chờ ghi mới {st.writes_planned}, ô chờ duyệt mới {st.reviews_opened}",
         ("GHI FB.JT: " + f"đã ghi {st.written}, xung đột {st.conflicts}, lỗi {st.failed}") if write_ok else
         ("GHI FB.JT: TẮT" + (" (RECON_SHEET_WRITE_ID khác RECON_FBJT_ID)" if write_on else "")),
-        (f"EMAIL TEST: đã gửi {st.emails_sent}, lỗi {st.emails_failed}"
+        (f"EMAIL {mail.mode.upper()}: đã gửi {st.emails_sent}, lỗi {st.emails_failed}"
          + (f", không gửi {dict(sorted(st.email_skipped.items()))}" if st.email_skipped else ""))
-        if mail.mode == "test" else "EMAIL: TẮT"]
+        if mail.mode != "off" else "EMAIL: TẮT"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

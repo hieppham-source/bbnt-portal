@@ -2,7 +2,8 @@
 API trang /reconcile (dashboard đối soát). Đọc / ghi Postgres của worker (``DATABASE_URL``).
 
 * Cả domain (người đăng nhập portal) được **xem**.
-* Chỉ email trong ``RECON_APPROVERS`` được **duyệt** ô I/K/M (Đổi / Giữ) và **Giữ / Tiếp tục** case.
+* Chỉ email trong ``RECON_APPROVERS`` được **duyệt** ô I/K/M (Đổi / Giữ), **Giữ / Tiếp tục** case và
+  **chọn loopmail** khi bot tìm thấy nhiều thread.
   Quyền kiểm ở backend, không chỉ ẩn nút.
 * Duyệt "Đổi" chỉ ghi quyết định; lần chạy worker sau mới ghi FB.JT (vẫn đọc lại ô trước khi ghi).
 """
@@ -60,6 +61,9 @@ class CaseOut(BaseModel):
     pic: str | None
     hold_reason: str | None
     updated_at: datetime
+    email_reasons: list[str] = []
+    loopmail_candidates: list[dict[str, str]] | None = None
+    gmail_thread_id: str | None = None
 
 
 class ReviewOut(BaseModel):
@@ -78,6 +82,10 @@ class DecisionIn(BaseModel):
     decision: Literal["CHANGE", "KEEP"]
 
 
+class LoopmailIn(BaseModel):
+    thread_id: str = Field(min_length=1, max_length=64)
+
+
 class HoldIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
@@ -92,11 +100,12 @@ def cases(user: CurrentUser, conn: Conn) -> list[CaseOut]:
     rows = conn.execute(
         "SELECT c.id, c.state, c.brand_codes, c.campaign, "
         "COALESCE(array_agg(r.last_row_number ORDER BY r.last_row_number) FILTER (WHERE r.id IS NOT NULL), '{}'), "
-        "c.bbnt_number, c.review_reasons, c.pic, c.hold_reason, c.updated_at "
-        "FROM recon_case c LEFT JOIN sheet_row r ON r.case_id = c.id "
+        "c.bbnt_number, c.review_reasons, c.pic, c.hold_reason, c.updated_at, c.email_reasons, "
+        "c.loopmail_candidates, c.gmail_thread_id FROM recon_case c LEFT JOIN sheet_row r ON r.case_id = c.id "
         "GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 1000").fetchall()
     return [CaseOut(id=r[0], state=r[1], brands=r[2], campaign=r[3], rows=r[4], bbnt_number=r[5], reasons=r[6],
-                    pic=r[7], hold_reason=r[8], updated_at=r[9]) for r in rows]
+                    pic=r[7], hold_reason=r[8], updated_at=r[9], email_reasons=r[10], loopmail_candidates=r[11],
+                    gmail_thread_id=r[12]) for r in rows]
 
 
 @router.get("/reviews", response_model=list[ReviewOut])
@@ -125,6 +134,23 @@ def decide(review_id: int, body: DecisionIn, user: CurrentUser, conn: Conn,
                      (now, who, str(review_id), Jsonb({"value": str(row[2]) if row[2] is not None else None}),
                       Jsonb({"decision": body.decision, "bbnt_value": str(row[3]), "column": row[1],
                              "case_id": str(row[0])})))
+
+
+@router.post("/cases/{case_id}/loopmail", status_code=204)
+def choose_loopmail(case_id: uuid.UUID, body: LoopmailIn, user: CurrentUser, conn: Conn,
+                    settings: Annotated[Settings, Depends(get_settings)]) -> None:
+    """KAM chọn 1 trong các thread bot tìm thấy (``loopmail_candidates``) — không nhận thread ngoài danh sách."""
+    who = _approver(user, settings)
+    with conn.transaction():
+        row = conn.execute("UPDATE recon_case SET gmail_thread_id = %s, loopmail_candidates = NULL, updated_at = now() "
+                           "WHERE id = %s AND gmail_thread_id IS NULL AND loopmail_candidates @> %s RETURNING id",
+                           (body.thread_id, case_id, Jsonb([{"id": body.thread_id}]))).fetchone()
+        if row is None:
+            raise HTTPException(409, detail={"code": "LOOPMAIL_NOT_CANDIDATE",
+                                             "message": "Thread không nằm trong danh sách bot tìm thấy"})
+        conn.execute("INSERT INTO audit_log (at, actor, action, entity, entity_id, after) "
+                     "VALUES (now(), %s, 'LOOPMAIL_CHOSEN', 'recon_case', %s, %s)",
+                     (who, str(case_id), Jsonb({"thread_id": body.thread_id})))
 
 
 @router.post("/cases/{case_id}/hold", status_code=204)

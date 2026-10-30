@@ -10,7 +10,7 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 ## Migration
 - Trước khi chạy: backup (`pg_dump "$DATABASE_URL" > backup.sql`, Neon cũng có point-in-time restore).
 - Up lỗi giữa chừng: file chạy trong 1 transaction → không để lại bảng dở (có test).
-- Rollback 0003 (chạy trước 0002): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0003_recon_email_test.down.sql` — xoá thư test trong `email_outbox`, giữ `audit_log`.
+- Rollback 0003 (chạy trước 0002): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0003_recon_email.down.sql` — xoá thư test trong `email_outbox`, giữ `audit_log`.
 - Rollback 0002 (chạy trước 0001): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0002_recon_idempotency.down.sql` — mất nhật ký `sheet_write`, giữ case.
 - Rollback 0001: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.down.sql` — **xoá toàn bộ dữ liệu workflow**, chỉ làm sau khi backup.
 
@@ -31,8 +31,15 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 `UPDATE cell_review SET decision = 'CHANGE' | 'KEEP', decided_by = '<email>', decided_at = now() WHERE id = ...;`
 CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô trước khi ghi).
 
-## Email chế độ test
-- Bật: Variables `RECON_EMAIL_MODE=test`, `RECON_EMAIL_TEST_TO=<1 địa chỉ @hannaholala.com>`, tuỳ chọn `RECON_EMAIL_MAX` (mặc định 5, tối đa 50 thư/lần chạy).
-- Mỗi case BBNT_DRAFTED / FIGURES_WRITTEN nhận đúng 1 thư test (tiêu đề `[TEST] ...`, đính kèm BBNT .docx); đầu thư ghi To/CC mà bản thật sẽ dùng. Bot không gửi tới các địa chỉ đó; mọi giá trị khác `off`/`test` bị từ chối.
-- Gửi lại thư test của 1 case (vd sau khi sửa EMAIL BRAND): `DELETE FROM email_outbox WHERE kind = 'ACCEPTANCE_TEST' AND case_id = '<id>';` rồi chạy lại. Thư FAILED không tự gửi lại.
-- Xem: `SELECT o.subject, o.status, o.last_error, c.bbnt_number FROM email_outbox o JOIN recon_case c ON c.id = o.case_id ORDER BY o.created_at DESC;`
+## Email nghiệm thu
+- Variables: `RECON_EMAIL_MODE` = `off` (mặc định) | `test` | `live`; `RECON_EMAIL_TEST_TO` (test, 1 địa chỉ @hannaholala.com); `RECON_EMAIL_MAX` (mặc định 5, tối đa 50 thư/lần chạy).
+- **test**: mỗi case BBNT_DRAFTED / FIGURES_WRITTEN nhận đúng 1 thư `[TEST] ...` kèm BBNT .docx, chỉ tới `RECON_EMAIL_TEST_TO`. Đầu thư ghi kết quả Audit Gate, loopmail tìm được, To/CC thật. Không đổi trạng thái case.
+- **live**: chỉ khi Audit Gate đạt — case FIGURES_WRITTEN, có EMAIL BRAND, TITLE MAIL tìm được **đúng 1** loopmail (tiêu đề bỏ Re:/Fw: = TITLE MAIL và thread có email brand), có mẫu `ACCEPTANCE` APPROVED, T2–T6 08:00–18:00 giờ VN. Reply vào loopmail (In-Reply-To/References), To brand, CC nội bộ. Case → ACCEPTANCE_SENT; bot không gửi lại.
+- Lý do chưa gửi hiện ở dashboard ("Email chưa gửi: ..."). Nhiều thread khớp → dashboard hiện nút "Chọn loopmail".
+- Duyệt mẫu thư thật (biến: `{brands}` `{group}` `{campaign}` `{bbnt_number}` `{contract_no}` `{nmv}` `{gmv}` `{commission}`):
+  `INSERT INTO email_template (code, version, status, subject, body_html, approved_by, approved_at) VALUES ('ACCEPTANCE', 1, 'APPROVED', '(reply loopmail)', '<p>...</p>', '<email người duyệt>', now());` — sửa mẫu = thêm `version` mới.
+- Gửi lại 1 case (thư FAILED hoặc muốn thử lại thư test): `DELETE FROM email_outbox WHERE kind IN ('ACCEPTANCE_TEST', 'ACCEPTANCE') AND status <> 'SENT' AND case_id = '<id>';` rồi chạy lại.
+- Xem: `SELECT o.kind, o.subject, o.status, o.last_error, c.bbnt_number FROM email_outbox o JOIN recon_case c ON c.id = o.case_id ORDER BY o.created_at DESC;`
+
+## Lịch chạy
+Workflow `recon-run-once` chạy 30 phút/lần 08:00–19:30 T2–T6 giờ VN **chỉ khi** Variable `RECON_SCHEDULE=on`. Dừng: đặt `off` (hoặc Disable workflow).
