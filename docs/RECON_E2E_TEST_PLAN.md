@@ -7,11 +7,14 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 
 | Việc | Cách làm |
 |---|---|
-| Biến GitHub | `RECON_FBJT_ID` = `RECON_SHEET_WRITE_ID` = ID bản sao; `RECON_SHEET_WRITE=on`; `RECON_EMAIL_MODE=test`; `RECON_EMAIL_TEST_TO=hiep.pham@hannaholala.com`; `RECON_EMAIL_MAX=5` |
-| Secret | `DATABASE_URL` = branch `test-write` (đã đổi mật khẩu sau lần lộ) |
-| Migration | Neon SQL Editor (branch `test-write`): chạy nội dung `backend/migrations/0003_recon_email.up.sql` |
-| Làm sạch DB test | `TRUNCATE recon_case, sheet_row, sheet_write, cell_review, email_outbox, state_transition, workflow_run, audit_log CASCADE;` (CHỈ branch test) |
-| Render | Tạm trỏ `DATABASE_URL` của backend về `test-write` để dashboard đọc cùng DB |
+| Migration | Neon SQL Editor, **branch `test-write`**: chạy lần lượt `0003_recon_email`, `0004_recon_status_emails`, `0005_recon_followups`, `0006_recon_brand_confirmed` (`.up.sql`, có sẵn trong `bbnt-portal-repo\neon-migrations`). Chạy lại không lỗi |
+| Làm sạch DB test | `TRUNCATE recon_case, sheet_row, sheet_change_event, sheet_write, cell_review, email_outbox, email_message, state_transition, workflow_run, audit_log CASCADE;` (CHỈ branch test — `audit_log` chỉ xoá được bằng TRUNCATE) |
+| GitHub Variables | `RECON_FBJT_ID` = `RECON_SHEET_WRITE_ID` = ID bản sao; `RECON_SHEET_WRITE=on`; `RECON_EMAIL_MODE=test`; `RECON_EMAIL_TEST_TO=hiep.pham@hannaholala.com`; `RECON_EMAIL_SIGNER=<tên ký thư>`; `RECON_EMAIL_MAX=5`; `RECON_SCHEDULE=off` (chạy tay) |
+| GitHub Secret | `DATABASE_URL` = branch `test-write` (mật khẩu mới) |
+| Token bot | Refresh token phải có `gmail.readonly` + `gmail.send` (đã cấp từ bước 5). Lỗi `Gmail HTTP 403` → lấy lại token |
+| Backend (Render) | Deploy tự động sau khi CI `main` xanh. Env `DATABASE_URL` tạm trỏ `test-write`, `RECON_APPROVERS` có email người duyệt |
+| Frontend | Worktree `bbnt-deploy`: `git pull` rồi `.\deploy.cmd` (dashboard mới: Thư chờ duyệt, Brand trả lời, Brand đã confirm, Chọn loopmail) |
+| Chạy | Actions → `recon-run-once` → Run workflow. Mỗi lần đổi dữ liệu bản sao thì chạy lại 1 lần |
 
 ## 1. Lọc dòng (dry-run hoặc run-once, xem báo cáo `--out`)
 
