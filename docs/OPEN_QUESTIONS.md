@@ -36,3 +36,5 @@ EMAIL 2 (confirm số + BBNT) là thư nghiệm thu của bot. Mâu thuẫn gi�
 | Q16 | Deadline = ngày gửi + 3 ngày (lịch) | 11.3: 3 ngày làm việc | **3 ngày làm việc** (bỏ T7, CN, ngày lễ đã duyệt). Email 2 đã sửa |
 | Q17 | Hạn thanh toán = ngày HĐ + số ngày theo HĐ (mặc định 7); 4B không ghi phạt | 13.4: 10 ngày làm việc + phạt ước tính 0,05%/ngày | **Giữ cũ**: 10 ngày làm việc, thư nhắc có dòng phạt ước tính |
 | Q18 | 3B đính kèm HĐ nháp PDF; Email 4 cần `{{THONG_TIN_TK}}` | Chưa có nguồn | **Kế toán tự gửi HĐ nháp**, bot chỉ gửi bản nhắc lại 3B. Email 4 **bỏ dòng thông tin chuyển khoản** |
+
+Ghi chú triển khai (30/10/2026): nhắc thanh toán bắt đầu từ **ngày đến hạn** (4A, theo mẫu "từ ngày {{HAN_THANH_TOAN}}"), quá hạn dùng 4B + phạt (Q17). Bot chưa tự hiểu nội dung thư brand (xác nhận / từ chối) — chỉ báo "brand trả lời" để KAM xử lý (ARCHITECTURE 2.4-5: câu chữ xác nhận do anh định nghĩa).

@@ -51,10 +51,11 @@ from app.recon.emailer import (
     status_request_text,
 )
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key
+from app.recon.followup import FOLLOW, FollowCase, load_cases, send_approved, send_followups, sync_replies, track_stages
 from app.recon.rules import BusinessCalendar, CellAction, confirm_deadline, entity_code, reminder_due
 from app.recon.sheet_writer import CellResult, CellWrite
 from app.recon.state_machine import InvalidTransition, State, Trigger, transition
-from app.recon.worker import Action, CasePlan
+from app.recon.worker import Action, CasePlan, _brand_to
 
 ACTOR = "worker"
 LOCK_KEY = 0x5245434F4E  # "RECON" — pg_try_advisory_lock: 1 worker một lúc
@@ -76,6 +77,7 @@ class RunStats:
     emails_sent: int = 0
     emails_failed: int = 0
     email_skipped: dict[str, int] = field(default_factory=dict)   # mã lý do -> số case
+    stage_moves: int = 0          # case đổi giai đoạn theo Status U (HĐ nháp / đã xuất HĐ / Done)
     notes: list[str] = field(default_factory=list)
 
 
@@ -473,3 +475,34 @@ def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
                 reason="email nghiệm thu"))
         _deliver(conn, oid, case_id, kind, msg, reply_to, gmail, live=live, now=now, run_id=run_id, st=st,
                  on_sent=sent)
+
+
+def run_followups(conn: psycopg.Connection, rows: Sequence[FbjtRow], done: Sequence[FbjtRow], tab: str,
+                  brand_emails: Mapping[str, str], gmail: Any, settings: EmailSettings, *, now: datetime,
+                  run_id: uuid.UUID, st: RunStats) -> None:
+    """Sau EMAIL 2: giai đoạn theo Status U (luôn chạy), đọc thư brand trả lời + nhắc 3A / 3B / 4 (khi bật email)."""
+    cases = load_cases(conn, rows, done, tab)
+    st.stage_moves += track_stages(conn, cases, now=now)
+    if settings.mode == "off":
+        return
+    cal = _calendar(conn)
+    threads = sync_replies(conn, [c for c in cases if c.state is not State.DONE], gmail)
+
+    def brand_to(fc: FollowCase) -> list[str] | str:
+        return _brand_to(fc.brands, brand_emails)
+
+    def deliver(conn: psycopg.Connection, oid: uuid.UUID, case_id: uuid.UUID, kind: str, msg: EmailMessage,
+                thread_id: str | None, gmail: Any, *, live: bool, now: datetime) -> None:
+        _deliver(conn, oid, case_id, kind, msg, thread_id, gmail, live=live, now=now, run_id=run_id, st=st)
+
+    active = [c for c in cases if c.state in FOLLOW]
+
+    def guard(m: EmailMessage) -> None:
+        _guard_test(m, settings)
+
+    def full() -> bool:
+        return _full(st, settings)
+
+    send_approved(conn, active, threads, brand_to, gmail, settings, deliver, guard, full, now=now, cal=cal)
+    send_followups(conn, active, threads, brand_to, gmail, settings, _outbox, deliver, guard, full,
+                   lambda *c: _bump(st, *c), now=now, cal=cal)

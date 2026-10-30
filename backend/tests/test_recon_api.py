@@ -104,3 +104,17 @@ def test_pending_email_approve_or_skip_by_approver_only(conn, run):
     assert c.post(f"/api/v1/recon/emails/{ids[1]}", json={"decision": "SEND"}, headers=BOSS).status_code == 409
     assert [r[0] for r in conn.execute("SELECT status FROM email_outbox ORDER BY cycle_no")] == ["QUEUED", "CANCELLED"]
     assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'EMAIL_REVIEW'")[0] == 2
+
+
+def test_brand_replies_listed_until_seen(conn, run):
+    go(conn, run, row(*ORG))
+    cid = one(conn, "SELECT id FROM recon_case")[0]
+    for mid, cls in (("m1", "UNKNOWN"), ("m2", "OOO"), ("m3", "BOUNCE")):
+        conn.execute("INSERT INTO email_message (gmail_message_id, gmail_thread_id, mailbox, case_id, direction, "
+                     "from_addr, sent_at, classification, subject) VALUES (%s, 't1', 'me', %s, 'IN', 'kt@brand.vn', "
+                     "now(), %s, 'Re: BBNT')", (mid, cid, cls))
+    c = client()
+    assert [r["id"] for r in c.get("/api/v1/recon/replies", headers=KAM).json()] == ["m1", "m3"]   # bỏ OOO
+    assert c.post("/api/v1/recon/replies/m1/seen", headers=KAM).status_code == 204
+    assert c.post("/api/v1/recon/replies/m1/seen", headers=KAM).status_code == 409
+    assert [r["id"] for r in c.get("/api/v1/recon/replies", headers=KAM).json()] == ["m3"]

@@ -235,7 +235,8 @@ def _payment(**change: object) -> PaymentReminderFacts:
 
 def test_payment_reminder_rules() -> None:
     assert evaluate_payment_reminder(_payment()).mode is SendMode.AUTO
-    assert "NOT_OVERDUE" in evaluate_payment_reminder(_payment(today=date(2026, 10, 22))).reasons
+    assert "NOT_DUE" in evaluate_payment_reminder(_payment(today=date(2026, 10, 21))).reasons
+    assert evaluate_payment_reminder(_payment(today=date(2026, 10, 22), last_reminder=None)).passed   # 4A ngày đến hạn
     assert "REMINDED_RECENTLY" in evaluate_payment_reminder(_payment(last_reminder=date(2026, 10, 25))).reasons
     assert "BRAND_REPLIED" in evaluate_payment_reminder(_payment(brand_replied_since_last=True)).reasons
     assert "ON_HOLD" in evaluate_payment_reminder(_payment(on_hold=True)).reasons

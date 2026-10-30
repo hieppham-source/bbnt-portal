@@ -107,7 +107,7 @@ def evaluate_payment_reminder(f: PaymentReminderFacts) -> AuditResult:
         (f.non_op, "NOT_FB_NON_OP"),
         (f.status_is_invoice_issued, "STATUS_NOT_INVOICE_ISSUED"),
         (f.invoices_parsed, "INVOICE_UNREADABLE"),
-        (f.due_date is not None and f.today > f.due_date, "NOT_OVERDUE"),
+        (f.due_date is not None and f.today >= f.due_date, "NOT_DUE"),     # mẫu: từ ngày đến hạn (4A)
         (f.commission_positive_and_matched, "COMMISSION_NOT_CONFIRMED"),
         (f.loopmail_known, "LOOPMAIL_UNKNOWN"),
         (reminder_due(f.last_reminder, f.today), "REMINDED_RECENTLY"),

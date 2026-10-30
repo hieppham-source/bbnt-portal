@@ -112,3 +112,13 @@ def test_0004_seeds_status_templates_and_down_is_clean(fresh_db: None) -> None:
     assert psql("SELECT count(*) FROM email_template WHERE code LIKE 'STATUS_%';").stdout.strip() == "4"
     run_file("0004_recon_status_emails.down.sql")
     assert psql("SELECT count(*) FROM email_template WHERE code LIKE 'STATUS_%';").stdout.strip() == "0"
+
+
+def test_0005_followup_templates_and_reply_columns(fresh_db: None) -> None:
+    for f in ("0003_recon_email", "0004_recon_status_emails", "0005_recon_followups", "0005_recon_followups"):
+        run_file(f"{f}.up.sql")
+    assert psql("SELECT count(*) FROM email_template WHERE code LIKE '%REMINDER%' AND code NOT LIKE 'STATUS%';"
+                ).stdout.strip() == "6"
+    run_file("0005_recon_followups.down.sql")
+    assert psql("SELECT count(*) FROM information_schema.columns WHERE table_name = 'email_message' "
+                "AND column_name = 'reviewed_at';").stdout.strip() == "0"

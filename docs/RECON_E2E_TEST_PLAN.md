@@ -99,6 +99,20 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 | 56 | Bấm **Gửi** | Lần chạy sau thư nhắc reply vào loopmail; 3 ngày sau có thư nhắc lần 2 chờ duyệt | |
 | 57 | Brand điền đủ status | Lập BBNT, ghi I/K/M, Email 2 reply cùng luồng; thư nhắc chưa gửi → huỷ | |
 
+## 4d. Sau email nghiệm thu
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 58 | Brand trả lời vào loopmail | Dashboard "Brand trả lời chưa xem"; trả lời tự động không hiện; bounce ghi "thư lỗi gửi" | |
+| 59 | Quá Email 2 + 3 ngày làm việc, U vẫn trước BBNT | Thư nhắc ký BBNT (3A) chờ duyệt; Gửi → reply loopmail | |
+| 60 | U = "Đã có BBNT + Chờ Admin Check" khi 3A đang chờ gửi | 3A bị huỷ | |
+| 61 | U = HĐ nháp | Case "Chờ confirm HĐ nháp"; quá 3 ngày làm việc → 3B chờ duyệt | |
+| 62 | U = "Đã xuất hóa đơn + Chờ tiền", ghi chú "HĐ: x (dd/mm/yyyy)" | Case "Chờ thanh toán"; đúng ngày đến hạn → 4A tự gửi (không có số TK) | |
+| 63 | Quá hạn | 4B: số ngày quá hạn + phạt ước tính = K × 0,05% × ngày; 3 ngày/lần | |
+| 64 | Brand trả lời sau 4B | Lần sau không gửi, lý do `BRAND_REPLIED` | |
+| 65 | Ghi chú HĐ sai dạng | `INVOICE_UNREADABLE`, không gửi | |
+| 66 | U = Done | Case "Xong", hết nhắc | |
+
 ## 4c. Lịch
 
 | # | Dựng | Mong đợi | |
@@ -107,7 +121,8 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 
 ## 5. Trước khi chuyển sang thật
 
-- [ ] Toàn bộ 57 dòng ✅.
+- [ ] Toàn bộ 66 dòng ✅.
+- [ ] Tắt bước S5 của skill nhắc cũ trước khi bật live.
 - [ ] Đặt `RECON_EMAIL_SIGNER`. Email 1/3/4 làm xong theo chốt Q15–Q18.
 - [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `RECON_SCHEDULE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.
 - [ ] Chạy migration `0003` trên Neon main.
