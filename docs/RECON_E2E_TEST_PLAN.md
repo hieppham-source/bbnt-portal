@@ -1,0 +1,83 @@
+# Kế hoạch test toàn bộ trước khi chạy hệ thống thật
+
+Chạy hết trên **bản sao FB.JT** + **Neon branch `test-write`**. Chưa qua hết bảng dưới thì chưa đổi sang FB.JT thật.
+Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh dấu ✅ / ❌ vào cột cuối, ❌ thì gửi log + số dòng.
+
+## 0. Chuẩn bị (1 lần)
+
+| Việc | Cách làm |
+|---|---|
+| Biến GitHub | `RECON_FBJT_ID` = `RECON_SHEET_WRITE_ID` = ID bản sao; `RECON_SHEET_WRITE=on`; `RECON_EMAIL_MODE=test`; `RECON_EMAIL_TEST_TO=hiep.pham@hannaholala.com`; `RECON_EMAIL_MAX=5` |
+| Secret | `DATABASE_URL` = branch `test-write` (đã đổi mật khẩu sau lần lộ) |
+| Migration | Neon SQL Editor (branch `test-write`): chạy nội dung `backend/migrations/0003_recon_email_test.up.sql` |
+| Làm sạch DB test | `TRUNCATE recon_case, sheet_row, sheet_write, cell_review, email_outbox, state_transition, workflow_run, audit_log CASCADE;` (CHỈ branch test) |
+| Render | Tạm trỏ `DATABASE_URL` của backend về `test-write` để dashboard đọc cùng DB |
+
+## 1. Lọc dòng (dry-run hoặc run-once, xem báo cáo `--out`)
+
+| # | Dựng trên bản sao | Kết quả mong đợi | |
+|---|---|---|---|
+| 1 | Campaign tháng 07/2026 | SKIP `BEFORE_SCOPE` | |
+| 2 | Cột H = `OP` | SKIP `NOT_FB_NON_OP` | |
+| 3 | Cột H trống | REVIEW `OP_COLUMN_BLANK` | |
+| 4 | Cột H = `abc` | REVIEW `OP_COLUMN_UNKNOWN` | |
+| 5 | M (HRV GMV) = 0 hoặc trống | SKIP `NO_REVENUE` | |
+| 6 | Status U = `Đã done BBNT + Chờ KT xuất HĐ nháp` | SKIP `BBNT_ALREADY_DONE` | |
+| 7 | Status U = `xyz` | REVIEW `STATUS_UNKNOWN` | |
+| 8 | NOTES có `GỘP LINE` | REVIEW `MERGED_LINE` | |
+| 9 | H = NON OP nhưng DATA BRAND cột OP = `OP` | REVIEW `OP_CONFLICT_DATA_BRAND` | |
+| 10 | 2 dòng cùng brand + campaign | REVIEW `FBJT_ROW_DUPLICATE` | |
+| 11 | Không có link trong `NON OP 26` | SKIP `LINK_NOT_FOUND` (+ gợi ý) | |
+| 12 | Link là chữ, không phải chip/URL | SKIP `LINK_INVALID` | |
+| 13 | 2 link khác nhau cho cùng brand + campaign | SKIP `LINK_AMBIGUOUS` | |
+
+## 2. Lập BBNT
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 14 | Cột G (ngày kết thúc) trống | WAIT `NO_CAMP_END` | |
+| 15 | G + 25 ngày > hôm nay | WAIT (có "gửi từ") | |
+| 16 | Link group, thiếu 1 dòng brand trên FB.JT | REVIEW `BRAND_ROWS_MISMATCH` | |
+| 17 | BÊN B = `Công ty lạ` | REVIEW `ENTITY_UNKNOWN` | |
+| 18 | Brand không có HĐ `Đã ký` trong DATA CONTRACT | REVIEW `CONTRACT_NOT_UNIQUE` | |
+| 19 | HĐ hết hạn trước ngày lập BBNT | REVIEW `CONTRACT_NOT_VALID_ON_BBNT_DATE` | |
+| 20 | Bot không mở được link order (bỏ chia sẻ) | REVIEW `ORDER_SHEET_UNREADABLE` | |
+| 21 | Ca sạch, I/K/M trống | DRAFT, có số BBNT | |
+| 22 | Link group 2 brand, đủ dòng | DRAFT, NMV/K tách đúng theo brand, tổng K = BBNT | |
+
+## 3. Ghi I/K/M + duyệt (run-once, `RECON_SHEET_WRITE=on`)
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 23 | Ca #21 | I/K/M được ghi; log `đã ghi 3`; `audit_log` có 3 dòng SHEET_WRITE | |
+| 24 | Chạy lại ngay | `case mới 0`, `ô chờ ghi mới 0`, không ghi lại; case → FIGURES_WRITTEN | |
+| 25 | I có sẵn số khác BBNT | REVIEW `FIGURES_DIFFER_FBJT`; dashboard hiện 1 ô chờ duyệt | |
+| 26 | Dashboard bấm **Đổi** ô #25, chạy lại | Ô được ghi số BBNT | |
+| 27 | Dashboard bấm **Giữ** 1 ô | Không ghi; ô biến khỏi danh sách | |
+| 28 | Ô M là công thức | `xung đột 1`, ô giữ nguyên | |
+| 29 | Sửa tay I sau khi bot lập BBNT, chạy lại | REVIEW `FIGURES_CHANGED_AFTER_ISSUE`, không ghi | |
+| 30 | Dashboard **Giữ case**, sửa dữ liệu, chạy lại | `bot không chạm 1`; bấm **Tiếp tục** → chạy lại xử lý bình thường | |
+| 31 | Đổi status U sang `Đã done BBNT...` sau khi đã có ô PLANNED | Không ghi (ngoài phạm vi) | |
+| 32 | Chạy 2 workflow cùng lúc | Lần thứ 2: "Đang có worker khác chạy" | |
+
+## 4. Email test (`RECON_EMAIL_MODE=test`)
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 33 | Ca DRAFT có EMAIL BRAND | 1 thư `[TEST] GROUP (BRAND) x EZS - FB - <TITLE MAIL>` về hộp thư test, kèm BBNT .docx mở được; đầu thư ghi To/CC thật | |
+| 34 | Kiểm tra người nhận thư #33 | Chỉ `hiep.pham@`, không CC; brand KHÔNG nhận | |
+| 35 | TITLE MAIL trống | Tiêu đề dùng tên campaign | |
+| 36 | Brand trống EMAIL BRAND | Không gửi; log `không gửi {'NO_BRAND_EMAIL': 1}` | |
+| 37 | EMAIL BRAND sai dạng | `BRAND_EMAIL_INVALID` | |
+| 38 | Chạy lại | Không gửi thư trùng | |
+| 39 | > 5 ca DRAFT | Chỉ 5 thư, còn lại `MAX_PER_RUN`; lần sau gửi tiếp | |
+| 40 | Số NMV/hoa hồng/GMV trong thư | Khớp file .docx và I/K/M | |
+| 41 | `RECON_EMAIL_MODE=live` | Workflow báo lỗi cấu hình, không làm gì | |
+
+## 5. Trước khi chuyển sang thật
+
+- [ ] Toàn bộ 41 dòng ✅.
+- [ ] Duyệt mẫu thư (Q1) — chế độ gửi brand thật **chưa có**; làm sau khi duyệt mẫu + cách tìm loopmail.
+- [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.
+- [ ] Chạy migration `0003` trên Neon main.
+- [ ] Lần đầu trên FB.JT thật: run-once **không ghi** → đọc báo cáo → mới bật ghi.

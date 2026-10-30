@@ -94,3 +94,12 @@ def test_0002_down_then_up(fresh_db: None) -> None:
     assert psql("SELECT 1 FROM recon_case;").returncode == 0      # 0001 còn nguyên
     run_file("0002_recon_idempotency.up.sql")
     assert psql("SELECT to_regclass('sheet_write');").stdout.strip() == "sheet_write"
+
+
+def test_0003_seeds_test_template_and_down_up_is_clean(fresh_db: None) -> None:
+    run_file("0003_recon_email_test.up.sql")
+    run_file("0003_recon_email_test.up.sql")                    # chạy lại không lỗi
+    assert psql("SELECT status FROM email_template WHERE code = 'ACCEPTANCE_TEST';").stdout.strip() \
+        == "NOT_CONFIGURED"
+    run_file("0003_recon_email_test.down.sql")
+    assert psql("SELECT count(*) FROM email_template;").stdout.strip() == "0"

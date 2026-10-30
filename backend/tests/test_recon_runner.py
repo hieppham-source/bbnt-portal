@@ -30,6 +30,7 @@ def conn() -> Iterator[psycopg.Connection]:
     assert psql("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").returncode == 0
     run_file("0001_recon_init.up.sql")
     run_file("0002_recon_idempotency.up.sql")
+    run_file("0003_recon_email_test.up.sql")
     with psycopg.connect(URL or "", autocommit=True) as c:
         yield c
 
@@ -164,3 +165,66 @@ def test_out_of_scope_case_keeps_planned_writes_unexecuted(conn, run):
     write_back(conn, lambda ws: [CellResult(w, "VERIFIED") for w in ws], {"nmv": "I", "commission": "K", "gmv": "M"},
                now=NOW, run_id=run_id, st=st)
     assert st.written == 0 and one(conn, "SELECT count(*) FROM sheet_write WHERE status = 'PLANNED'")[0] == 3
+
+
+# --------------------------------------------------------------------------------------------- email test
+def _send_ok(sent):
+    def send(msg):
+        sent.append(msg)
+        return f"gm{len(sent)}"
+    return send
+
+
+def test_test_email_sent_once_per_case_and_audited(conn, run):
+    from app.recon.emailer import EmailSettings
+    from app.recon.runner import send_test_emails
+
+    from .test_recon_email import MAIL, TEST
+    settings, sent = EmailSettings.from_env(TEST), []
+    plans, st, run_id = go(conn, run, row(*ORG))
+    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok(sent), settings, now=NOW, run_id=run_id, st=st)
+    assert st.emails_sent == 1 and [m["To"] for m in sent] == ["hiep.pham@hannaholala.com"]
+    assert one(conn, "SELECT status, to_addrs, cc_addrs FROM email_outbox") == ("SENT", ["hiep.pham@hannaholala.com"],
+                                                                               [])
+    assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'EMAIL_SEND'")[0] == 1
+    assert one(conn, "SELECT state FROM recon_case") == ("BBNT_DRAFTED",)            # test không đổi trạng thái
+    plans, st, run_id = go(conn, run, row(*ORG))
+    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok(sent), settings, now=NOW, run_id=run_id, st=st)
+    assert st.emails_sent == 0 and len(sent) == 1                                     # chạy lại không gửi trùng
+
+
+def test_test_email_failure_is_recorded_not_retried_and_off_mode_sends_nothing(conn, run):
+    from app.recon.emailer import EmailSettings
+    from app.recon.runner import send_test_emails
+
+    from .test_recon_email import MAIL, TEST
+    plans, st, run_id = go(conn, run, row(*ORG))
+    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok([]), EmailSettings("off"), now=NOW, run_id=run_id,
+                     st=st)
+    assert one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
+
+    def boom(msg):
+        raise TimeoutError
+    send_test_emails(conn, plans, lambda p, at: MAIL, boom, EmailSettings.from_env(TEST), now=NOW, run_id=run_id,
+                     st=st)
+    assert st.emails_failed == 1 and one(conn, "SELECT status, last_error FROM email_outbox") == ("FAILED",
+                                                                                                   "TimeoutError")
+    sent: list = []
+    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok(sent), EmailSettings.from_env(TEST), now=NOW,
+                     run_id=run_id, st=st)
+    assert sent == []
+
+
+def test_test_email_skips_with_reason_and_respects_limit(conn, run):
+    from app.recon.emailer import EmailSettings
+    from app.recon.runner import send_test_emails
+
+    from .test_recon_email import MAIL, TEST
+    plans, st, run_id = go(conn, run, row(*ORG))
+    send_test_emails(conn, plans, lambda p, at: "NO_BRAND_EMAIL", _send_ok([]), EmailSettings.from_env(TEST),
+                     now=NOW, run_id=run_id, st=st)
+    assert st.email_skipped == {"NO_BRAND_EMAIL": 1} and one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
+    st.email_skipped.clear()
+    send_test_emails(conn, plans, lambda p, at: MAIL, _send_ok([]), EmailSettings.from_env({**TEST,
+                     "RECON_EMAIL_MAX": "0"}), now=NOW, run_id=run_id, st=st)
+    assert st.email_skipped == {"MAX_PER_RUN": 1}

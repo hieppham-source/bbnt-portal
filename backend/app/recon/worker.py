@@ -32,6 +32,7 @@ from app.config import DEFAULT_TEMPLATES_DIR
 from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
+from app.recon.emailer import BbntMail, split_addresses
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key, parse_rows, row_key
 from app.recon.rules import SCOPE_FROM, CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
@@ -92,6 +93,8 @@ class CasePlan:
     hints: list[str] = field(default_factory=list)
     #: Số dòng order bị loại khỏi NMV theo mã (Hoàn / Hủy / status lạ).
     warnings: dict[str, int] = field(default_factory=dict)
+    #: Đầu vào generator (để render .docx đính kèm email sau khi lưu DB).
+    job: CaseBbnt | None = None
 
 
 def _commission_k(r: BbntResult) -> Decimal:
@@ -247,8 +250,9 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             plan.hints.append(f"DATA CONTRACT 'Đã ký' khớp {'/'.join(brands)} + {entity}: "
                               + (", ".join(found) if found else "không có"))
             continue
-        out = make_bbnt(templates, master, CaseBbnt(entity, brands, plan.campaign, found[0]), open_order(url),
-                        issued_at=(issued_at or {}).get(sid, now), render=False)
+        plan.job = CaseBbnt(entity, brands, plan.campaign, found[0])
+        out = make_bbnt(templates, master, plan.job, open_order(url), issued_at=(issued_at or {}).get(sid, now),
+                        render=False)
         if out.result is None:
             plan.reasons.extend(out.reasons)
             continue
@@ -268,6 +272,33 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
         if not plan.reasons:
             plan.action = Action.DRAFT
     return plans
+
+
+Render = Callable[[CasePlan, datetime], "BbntResult | None"]
+
+
+def mail_for(p: CasePlan, issued_at: datetime, rows: Mapping[int, FbjtRow], brand_emails: Mapping[str, str],
+             render: Render) -> BbntMail | str:
+    """Dữ liệu thư BBNT của 1 case DRAFT, hoặc mã lý do không gửi (thiếu email brand, render lỗi…)."""
+    to: list[str] = []
+    for b in p.brands:
+        text = brand_emails.get(brand_key(b), "")
+        if not text.strip():
+            return "NO_BRAND_EMAIL"
+        try:
+            to += split_addresses(text)
+        except ValueError:
+            return "BRAND_EMAIL_INVALID"
+    r = render(p, issued_at)
+    if r is None or r.content is None:
+        return "RENDER_FAILED"
+    if str(r.number) != p.bbnt_number:
+        return "BBNT_NUMBER_CHANGED"
+    first = rows[p.rows[0]]
+    filename = "BBNT_" + re.sub(r'[\\/:*?"<>|\s]+', "_", str(r.number)) + ".docx"   # như API tải BBNT
+    return BbntMail(first.group, p.brands, r.entity.code, first.title_mail or p.campaign, p.campaign,
+                    str(r.number), r.contract.contract_no, r.nmv_vnd, _commission_k(r), r.gmv_vnd,
+                    list(dict.fromkeys(to)), filename, r.content)
 
 
 # --------------------------------------------------------------------------------------------------------- CLI
@@ -313,13 +344,21 @@ def summary(plans: Sequence[CasePlan]) -> list[str]:
             + [f"  {r}: {n}" for r, n in sorted(reasons.items())])
 
 
-def _live(today: date, now: datetime, scope_from: date, issued_at: Mapping[str, datetime] | None = None
-          ) -> tuple[list[CasePlan], list[list[Any]], str]:
-    """(plans, giá trị tab FB-{YYYY}, access token)."""
+@dataclass
+class Live:
+    plans: list[CasePlan]
+    values: list[list[Any]]              # tab FB-{YYYY}
+    token: str
+    render: Render                       # render .docx cho case DRAFT
+    brand_emails: dict[str, str]         # DATA BRAND: brand (chuẩn hoá) -> EMAIL BRAND
+
+
+def _live(today: date, now: datetime, scope_from: date, issued_at: Mapping[str, datetime] | None = None) -> Live:
     from app.master.repository import build_master, google_sheet_source
     from app.recon.google_bot import (
         BotEnv,
         BotSheets,
+        parse_brand_emails,
         parse_brand_op,
         parse_contracts,
         parse_order_links,
@@ -339,11 +378,17 @@ def _live(today: date, now: datetime, scope_from: date, issued_at: Mapping[str, 
         return lambda: [reader.open(ref)]
 
     values = reader.read(fbjt, sheet_name=f"FB-{today.year}")
-    plans = plan_cases(values, links, parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")),
-                       build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))()),
-                       TemplateRegistry(DEFAULT_TEMPLATES_DIR), open_order, today=today, now=now, issued_at=issued_at,
-                       brand_op=parse_brand_op(reader.read(fbjt, sheet_name="DATA BRAND")), scope_from=scope_from)
-    return plans, values, token
+    data_brand = reader.read(fbjt, sheet_name="DATA BRAND")
+    master = build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))())
+    templates = TemplateRegistry(DEFAULT_TEMPLATES_DIR)
+    plans = plan_cases(values, links, parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")), master,
+                       templates, open_order, today=today, now=now, issued_at=issued_at,
+                       brand_op=parse_brand_op(data_brand), scope_from=scope_from)
+
+    def render(p: CasePlan, at: datetime) -> BbntResult | None:
+        assert p.job is not None and p.url is not None
+        return make_bbnt(templates, master, p.job, open_order(p.url), issued_at=at, render=True).result
+    return Live(plans, values, token, render, parse_brand_emails(data_brand))
 
 
 def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
@@ -354,9 +399,16 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
     import psycopg
     import requests
 
+    from app.recon.emailer import EmailSettings, gmail_send
     from app.recon.fbjt import WRITABLE
     from app.recon.google_bot import BotConfigError
-    from app.recon.runner import LOCK_KEY, persist, stored_issued_at, write_back
+    from app.recon.runner import (
+        LOCK_KEY,
+        persist,
+        send_test_emails,
+        stored_issued_at,
+        write_back,
+    )
     from app.recon.sheet_writer import write_cells
 
     url = os.environ.get("DATABASE_URL", "").strip()
@@ -366,20 +418,24 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
     write_on = os.environ.get("RECON_SHEET_WRITE", "off").strip().lower() == "on"
     write_ok = write_on and os.environ.get("RECON_SHEET_WRITE_ID", "").strip() == fbjt_id != ""
     tab = f"FB-{today.year}"
+    mail = EmailSettings.from_env(os.environ)        # sai cấu hình -> dừng trước khi làm gì
     with psycopg.connect(url, autocommit=True) as conn:
         if not conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0]:  # type: ignore[index]
             return ["Đang có worker khác chạy — bỏ qua lần này"]
         run_id = uuid.uuid4()
         conn.execute("INSERT INTO workflow_run (id, mode, started_at) VALUES (%s, 'RUN_ONCE', %s)", (run_id, now))
         try:
-            plans, values, token = _live(today, now, scope_from, stored_issued_at(conn))
-            outcome = parse_rows(values)
-            st = persist(conn, plans, {r.row_number: r for r in outcome.rows}, tab=tab, now=now, run_id=run_id)
+            live = _live(today, now, scope_from, stored_issued_at(conn))
+            plans, outcome = live.plans, parse_rows(live.values)
+            by_row = {r.row_number: r for r in outcome.rows}
+            st = persist(conn, plans, by_row, tab=tab, now=now, run_id=run_id)
+            s = requests.Session()
+            s.headers["Authorization"] = f"Bearer {live.token}"
             if write_ok:
-                s = requests.Session()
-                s.headers["Authorization"] = f"Bearer {token}"
                 write_back(conn, lambda ws: write_cells(s, fbjt_id, tab, ws),
                            {k: outcome.columns.letter(k) for k in WRITABLE}, now=now, run_id=run_id, st=st)
+            send_test_emails(conn, plans, lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
+                             lambda m: gmail_send(s, m), mail, now=now, run_id=run_id, st=st)
             conn.execute("UPDATE workflow_run SET finished_at = now(), status = 'OK', rows_scanned = %s WHERE id = %s",
                          (len(outcome.rows), run_id))
         except Exception as exc:
@@ -390,7 +446,10 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
         f"DB: case mới {st.cases_new}, chuyển trạng thái {st.transitions}, không đổi {st.unchanged}, "
         f"bot không chạm {st.untouched}, ô chờ ghi mới {st.writes_planned}, ô chờ duyệt mới {st.reviews_opened}",
         ("GHI FB.JT: " + f"đã ghi {st.written}, xung đột {st.conflicts}, lỗi {st.failed}") if write_ok else
-        ("GHI FB.JT: TẮT" + (" (RECON_SHEET_WRITE_ID khác RECON_FBJT_ID)" if write_on else ""))]
+        ("GHI FB.JT: TẮT" + (" (RECON_SHEET_WRITE_ID khác RECON_FBJT_ID)" if write_on else "")),
+        (f"EMAIL TEST: đã gửi {st.emails_sent}, lỗi {st.emails_failed}"
+         + (f", không gửi {dict(sorted(st.email_skipped.items()))}" if st.email_skipped else ""))
+        if mail.mode == "test" else "EMAIL: TẮT"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -419,7 +478,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if a.mode == "run-once":
                 print("\n".join(_run_once(today, now, a.scope_from)))
                 return 0
-            plans = _live(today, now, a.scope_from)[0]
+            plans = _live(today, now, a.scope_from).plans
         except Exception as exc:  # noqa: BLE001 — log CI: không in chi tiết có thể chứa dữ liệu brand
             print(f"LỖI {type(exc).__name__}: {exc if isinstance(exc, BotConfigError) else '(chi tiết ẩn)'}",
                   file=sys.stderr)

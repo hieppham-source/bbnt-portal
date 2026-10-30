@@ -19,12 +19,22 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from email.message import EmailMessage
 from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
 
 from app.recon.db import CaseState, NewCase, apply_transition, create_case
+from app.recon.emailer import (
+    KIND,
+    BbntMail,
+    EmailConfigError,
+    EmailSettings,
+    body,
+    build_test_message,
+    recipients,
+)
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key
 from app.recon.rules import CellAction, entity_code
 from app.recon.sheet_writer import CellResult, CellWrite
@@ -48,6 +58,9 @@ class RunStats:
     written: int = 0
     conflicts: int = 0
     failed: int = 0
+    emails_sent: int = 0
+    emails_failed: int = 0
+    email_skipped: dict[str, int] = field(default_factory=dict)   # mã lý do -> số case
     notes: list[str] = field(default_factory=list)
 
 
@@ -186,3 +199,55 @@ def write_back(conn: psycopg.Connection, write: Writer, letters: Mapping[str, st
 
 def _jsonable(v: Any) -> Any:
     return v if v is None or isinstance(v, (int, float, str, bool)) else str(v)
+
+
+def send_test_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
+                     build: Callable[[CasePlan, datetime], BbntMail | str], send: Callable[[EmailMessage], str],
+                     settings: EmailSettings, *, now: datetime, run_id: uuid.UUID, st: RunStats) -> None:
+    """Chế độ test: mỗi case BBNT_DRAFTED / FIGURES_WRITTEN của lần chạy này nhận ĐÚNG 1 thư test (``email_outbox``
+    UNIQUE theo case + kind). Không đổi trạng thái case. Thư FAILED không tự gửi lại."""
+    if settings.mode != "test":
+        return
+    by_sid = {p.order_sheet_id: p for p in plans if p.action is Action.DRAFT and p.order_sheet_id}
+    todo = conn.execute(
+        "SELECT c.id, c.order_sheet_id, c.bbnt_issued_at FROM recon_case c WHERE c.last_run_id = %s "
+        "AND c.state IN ('BBNT_DRAFTED', 'FIGURES_WRITTEN') AND c.bbnt_issued_at IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM email_outbox o WHERE o.case_id = c.id AND o.kind = %s) "
+        "ORDER BY c.updated_at, c.id", (run_id, KIND)).fetchall()
+    skip = st.email_skipped
+    for case_id, sid, issued_at in todo:
+        p = by_sid.get(sid)
+        if p is None:
+            continue
+        if st.emails_sent + st.emails_failed >= settings.max_per_run:
+            skip["MAX_PER_RUN"] = skip.get("MAX_PER_RUN", 0) + 1
+            continue
+        mail = build(p, issued_at)
+        if isinstance(mail, str):
+            skip[mail] = skip.get(mail, 0) + 1
+            continue
+        msg = build_test_message(mail, settings)
+        if recipients(msg) != [settings.test_to]:            # chốt chặn cuối: không bao giờ gửi brand
+            raise EmailConfigError("Thư test có người nhận ngoài RECON_EMAIL_TEST_TO")
+        oid = uuid.uuid4()
+        with conn.transaction():
+            if conn.execute(
+                    "INSERT INTO email_outbox (id, case_id, kind, cycle_no, idempotency_key, template_code, "
+                    "template_version, to_addrs, subject, body_html, status, attempts, created_at) "
+                    "VALUES (%s, %s, %s, 1, %s, %s, 1, %s, %s, %s, 'SENDING', 1, %s) ON CONFLICT DO NOTHING",
+                    (oid, case_id, KIND, f"{case_id}:{KIND}:1", KIND, [settings.test_to], msg["Subject"],
+                     body(mail), now)).rowcount == 0:
+                continue
+        try:
+            gmail_id, status, error = send(msg), "SENT", None
+        except Exception as exc:  # noqa: BLE001 — ghi lỗi, không dừng cả lần chạy
+            gmail_id, status, error = None, "FAILED", type(exc).__name__
+        with conn.transaction():
+            conn.execute("UPDATE email_outbox SET status = %s, last_error = %s WHERE id = %s", (status, error, oid))
+            conn.execute(
+                "INSERT INTO audit_log (at, actor, action, entity, entity_id, before, after, run_id) "
+                "VALUES (%s, %s, 'EMAIL_SEND', 'email_outbox', %s, NULL, %s, %s)",
+                (now, ACTOR, str(oid), Jsonb({"mode": "TEST", "status": status, "gmail_id": gmail_id,
+                                              "case_id": str(case_id), "error": error}), run_id))
+        st.emails_sent += status == "SENT"
+        st.emails_failed += status == "FAILED"
