@@ -10,6 +10,7 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 ## Migration
 - Trước khi chạy: backup (`pg_dump "$DATABASE_URL" > backup.sql`, Neon cũng có point-in-time restore).
 - Up lỗi giữa chừng: file chạy trong 1 transaction → không để lại bảng dở (có test).
+- Rollback 0005 (chạy trước 0004): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0005_recon_followups.down.sql`.
 - Rollback 0004 (chạy trước 0003): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0004_recon_status_emails.down.sql`.
 - Rollback 0003 (chạy trước 0002): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0003_recon_email.down.sql` — xoá thư test trong `email_outbox`, giữ `audit_log`.
 - Rollback 0002 (chạy trước 0001): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0002_recon_idempotency.down.sql` — mất nhật ký `sheet_write`, giữ case.
@@ -41,6 +42,13 @@ CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô tr�
 - **Email 1** (G + 25, file order còn dòng chưa có status → case `STATUS_INCOMPLETE`): tự gửi 1 lần, mở loopmail mới nếu chưa có. Quá hạn → thư nhắc hiện ở dashboard mục **Thư chờ duyệt** (Gửi / Bỏ); Gửi → lần chạy sau gửi vào loopmail. Brand điền đủ → bot lập BBNT + Email 2, thư nhắc chưa gửi tự huỷ.
 - Gửi lại 1 case (thư FAILED hoặc muốn thử lại thư test): `DELETE FROM email_outbox WHERE kind IN ('ACCEPTANCE_TEST', 'ACCEPTANCE', 'STATUS_REQUEST', 'STATUS_REQUEST_TEST') AND status NOT IN ('SENT', 'PENDING_REVIEW', 'QUEUED') AND case_id = '<id>';` rồi chạy lại.
 - Xem: `SELECT o.kind, o.subject, o.status, o.last_error, c.bbnt_number FROM email_outbox o JOIN recon_case c ON c.id = o.case_id ORDER BY o.created_at DESC;`
+
+## Sau email nghiệm thu
+- Giai đoạn đi theo Status U do kế toán cập nhật (bot không ghi U). Dashboard có thêm "Chờ confirm HĐ nháp", "Chờ thanh toán".
+- **Brand trả lời chưa xem**: thư brand gửi vào loopmail; mở Gmail đọc rồi bấm "Đã xem". Thư lỗi gửi (bounce) → kiểm tra EMAIL BRAND.
+- **3A / 3B** (nhắc ký BBNT / confirm HĐ nháp): hiện ở "Thư chờ duyệt" khi quá hạn 3 ngày làm việc, sau đó 3 ngày/lần.
+- **4A / 4B** (nhắc thanh toán): tự gửi từ ngày đến hạn (ngày HĐ trong ghi chú cột "Oanh note…" + 10 ngày làm việc), 3 ngày/lần; 4B có phạt ước tính. Không đọc được số/ngày HĐ → "Email chưa gửi: INVOICE_UNREADABLE". Brand đã trả lời sau lần nhắc trước → `BRAND_REPLIED`, bot dừng; KAM xử lý rồi (nếu cần nhắc tiếp) đánh dấu đã xem + chờ chu kỳ sau.
+- Đang chạy skill nhắc cũ song song: **tắt bước S5 của skill** trước khi bật live để không nhắc trùng (bot chưa đọc REMINDER LOG).
 
 ## Lịch chạy
 Workflow `recon-run-once` chạy 30 phút/lần 08:00–19:30 T2–T6 giờ VN **chỉ khi** Variable `RECON_SCHEDULE=on`. Dừng: đặt `off` (hoặc Disable workflow).

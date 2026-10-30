@@ -92,6 +92,18 @@ class PendingEmailOut(BaseModel):
     created_at: datetime
 
 
+class ReplyOut(BaseModel):
+    id: str
+    case_id: uuid.UUID
+    brands: list[str]
+    campaign: str
+    state: str
+    from_addr: str | None
+    subject: str | None
+    classification: str | None
+    sent_at: datetime | None
+
+
 class DecisionIn(BaseModel):
     decision: Literal["CHANGE", "KEEP"]
 
@@ -180,6 +192,27 @@ def decide_email(email_id: uuid.UUID, body: EmailDecisionIn, user: CurrentUser, 
                      "VALUES (now(), %s, 'EMAIL_REVIEW', 'email_outbox', %s, %s)",
                      (who, str(email_id), Jsonb({"decision": body.decision, "kind": row[1],
                                                  "case_id": str(row[0])})))
+
+
+@router.get("/replies", response_model=list[ReplyOut])
+def replies(user: CurrentUser, conn: Conn) -> list[ReplyOut]:
+    """Thư brand gửi vào loopmail chưa ai xem (bỏ trả lời tự động). Bot không tự hiểu nội dung — KAM đọc trong Gmail
+    rồi cập nhật Status U / Giữ case. Brand trả lời sau lần nhắc thanh toán -> bot dừng tự nhắc."""
+    rows = conn.execute(
+        "SELECT m.gmail_message_id, m.case_id, c.brand_codes, c.campaign, c.state, m.from_addr, m.subject, "
+        "m.classification, m.sent_at FROM email_message m JOIN recon_case c ON c.id = m.case_id "
+        "WHERE m.direction = 'IN' AND m.reviewed_at IS NULL AND m.classification IS DISTINCT FROM 'OOO' "
+        "ORDER BY m.sent_at").fetchall()
+    return [ReplyOut(id=r[0], case_id=r[1], brands=r[2], campaign=r[3], state=r[4], from_addr=r[5], subject=r[6],
+                     classification=r[7], sent_at=r[8]) for r in rows]
+
+
+@router.post("/replies/{message_id}/seen", status_code=204)
+def reply_seen(message_id: str, user: CurrentUser, conn: Conn) -> None:
+    """Ai đăng nhập portal cũng đánh dấu đã xem được (không đổi gì trên FB.JT / Gmail)."""
+    if conn.execute("UPDATE email_message SET reviewed_by = %s, reviewed_at = now() WHERE gmail_message_id = %s "
+                    "AND direction = 'IN' AND reviewed_at IS NULL", (user.email.lower(), message_id)).rowcount == 0:
+        raise HTTPException(409, detail={"code": "REPLY_ALREADY_SEEN", "message": "Thư đã được đánh dấu xem"})
 
 
 @router.post("/cases/{case_id}/loopmail", status_code=204)

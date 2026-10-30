@@ -32,6 +32,7 @@ def conn() -> Iterator[psycopg.Connection]:
     run_file("0002_recon_idempotency.up.sql")
     run_file("0003_recon_email.up.sql")
     run_file("0004_recon_status_emails.up.sql")
+    run_file("0005_recon_followups.up.sql")
     with psycopg.connect(URL or "", autocommit=True) as c:
         yield c
 

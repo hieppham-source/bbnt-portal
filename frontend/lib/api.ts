@@ -272,6 +272,22 @@ export type ReconEmail = {
   created_at: string
 }
 
+export type ReconReply = {
+  id: string
+  case_id: string
+  brands: string[]
+  campaign: string
+  state: string
+  from_addr: string | null
+  subject: string | null
+  classification: string | null
+  sent_at: string | null
+}
+
+export const reconReplies = (t: Tokens): Promise<ReconReply[]> =>
+  call(t, "/api/v1/recon/replies").then((r) => r.json())
+export const markReplySeen = (t: Tokens, id: string): Promise<unknown> =>
+  call(t, `/api/v1/recon/replies/${encodeURIComponent(id)}/seen`, { method: "POST" })
 export const reconEmails = (t: Tokens): Promise<ReconEmail[]> =>
   call(t, "/api/v1/recon/emails").then((r) => r.json())
 export const decideEmail = (t: Tokens, id: string, decision: "SEND" | "SKIP"): Promise<unknown> =>

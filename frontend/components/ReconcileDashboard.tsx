@@ -8,12 +8,15 @@ import {
   decideEmail,
   decideReview,
   holdCase,
+  markReplySeen,
   type ReconCase,
   type ReconEmail,
+  type ReconReply,
   type ReconMe,
   type ReconReview,
   reconCases,
   reconEmails,
+  reconReplies,
   reconMe,
   reconReviews,
   resumeCase,
@@ -34,6 +37,11 @@ const STATE_LABEL: Record<string, string> = {
   ERROR: "Lỗi",
   DONE: "Xong",
 }
+const KIND_LABEL: Record<string, string> = {
+  STATUS_REMINDER: "Nhắc điền status",
+  CONFIRM_BBNT_REMINDER: "Nhắc ký BBNT",
+  INVOICE_DRAFT_REMINDER: "Nhắc confirm HĐ nháp",
+}
 const COLUMN_LABEL: Record<string, string> = { nmv: "I · NMV", commission: "K · Hoa hồng", gmv: "M · HRV GMV" }
 
 export default function ReconcileDashboard() {
@@ -42,6 +50,7 @@ export default function ReconcileDashboard() {
   const [cases, setCases] = useState<ReconCase[]>([])
   const [reviews, setReviews] = useState<ReconReview[]>([])
   const [emails, setEmails] = useState<ReconEmail[]>([])
+  const [replies, setReplies] = useState<ReconReply[]>([])
   const [state, setState] = useState("NEEDS_REVIEW")
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -56,12 +65,14 @@ export default function ReconcileDashboard() {
     if (!token) return
     setBusy(true)
     try {
-      const [m, c, r, e] = await Promise.all([
+      const [m, c, r, e, rp] = await Promise.all([
         reconMe(token),
         reconCases(token),
         reconReviews(token),
         reconEmails(token),
+        reconReplies(token),
       ])
+      setReplies(rp)
       setMe(m)
       setCases(c)
       setReviews(r)
@@ -170,6 +181,43 @@ export default function ReconcileDashboard() {
 
       <section className="card wide">
         <div className="card-head">
+          <h2>Brand trả lời chưa xem ({replies.length})</h2>
+        </div>
+        <p className="hint">
+          Thư brand gửi vào loopmail (bot không đọc nội dung). Mở Gmail để xem, rồi cập nhật Status U hoặc Giữ case nếu
+          cần. Brand trả lời sau thư nhắc thanh toán thì bot dừng tự nhắc case đó.
+        </p>
+        {replies.length === 0 ? (
+          <p className="muted">Không có thư mới.</p>
+        ) : (
+          <table className="issues">
+            <tbody>
+              {replies.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.sent_at ? new Date(r.sent_at).toLocaleString("vi-VN") : "—"}</td>
+                  <td>
+                    {r.brands.join(", ")} · {r.campaign}
+                    <div className="muted">{STATE_LABEL[r.state] ?? r.state}</div>
+                  </td>
+                  <td>
+                    {r.from_addr}
+                    {r.classification === "BOUNCE" && <b> · thư lỗi gửi (sai email?)</b>}
+                    <div className="muted">{r.subject}</div>
+                  </td>
+                  <td>
+                    <button disabled={busy} onClick={() => act(() => markReplySeen(token, r.id))}>
+                      Đã xem
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="card wide">
+        <div className="card-head">
           <h2>Thư chờ duyệt ({emails.length})</h2>
         </div>
         <p className="hint">
@@ -182,7 +230,8 @@ export default function ReconcileDashboard() {
           emails.map((m) => (
             <details key={m.id} className="email-preview">
               <summary>
-                {m.brands.join(", ")} · {m.campaign} · lần nhắc {m.cycle_no} — {m.subject}
+                {m.brands.join(", ")} · {m.campaign} · {KIND_LABEL[m.kind.replace(/_TEST$/, "")] ?? m.kind} lần{" "}
+                {m.cycle_no} — {m.subject}
               </summary>
               <p className="muted">
                 To: {m.to.join(", ")}
@@ -212,7 +261,17 @@ export default function ReconcileDashboard() {
           <input placeholder="Tìm brand, campaign, PIC, số BBNT" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <div className="chips">
-          {["NEEDS_REVIEW", "WAITING", "BBNT_DRAFTED", "FIGURES_WRITTEN", "ACCEPTANCE_SENT", "ON_HOLD", "ALL"].map((s) => (
+          {[
+            "NEEDS_REVIEW",
+            "WAITING",
+            "BBNT_DRAFTED",
+            "FIGURES_WRITTEN",
+            "ACCEPTANCE_SENT",
+            "AWAITING_INVOICE_CONFIRM",
+            "AWAITING_PAYMENT",
+            "ON_HOLD",
+            "ALL",
+          ].map((s) => (
             <button key={s} className={state === s ? "primary" : ""} onClick={() => setState(s)}>
               {s === "ALL" ? `Tất cả (${cases.length})` : `${STATE_LABEL[s]} (${counts[s] ?? 0})`}
             </button>

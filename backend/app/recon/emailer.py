@@ -210,12 +210,31 @@ def body(m: BbntMail) -> str:
 
 # ----------------------------------------------------------------------------------------------- loopmail
 @dataclass(frozen=True)
+class Message:
+    """1 thư trong loopmail (chỉ metadata — bot không lưu nội dung thư)."""
+
+    id: str                          # gmail message id
+    rfc822_id: str
+    from_addr: str
+    at_ms: int                       # internalDate
+    subject: str
+    auto: bool = False               # trả lời tự động / out-of-office (Auto-Submitted, X-Autoreply, Precedence)
+    bounce: bool = False             # mailer-daemon / postmaster
+
+    @property
+    def internal(self) -> bool:
+        """Thư từ phía Hannah (domain @hannaholala.com hoặc danh sách nội bộ) — không phải brand trả lời."""
+        return self.from_addr.endswith("@hannaholala.com") or self.from_addr in INTERNAL_CC
+
+
+@dataclass(frozen=True)
 class Thread:
     id: str
     subject: str                     # tiêu đề thư đầu thread
     message_ids: list[str]           # Message-ID (RFC 822) theo thứ tự thời gian
     participants: frozenset[str]     # mọi địa chỉ From/To/Cc trong thread (chữ thường)
     last_at: str = ""                # internalDate thư cuối (ms) — để KAM chọn
+    messages: tuple[Message, ...] = ()
 
     def summary(self) -> dict[str, str]:
         return {"id": self.id, "subject": self.subject, "last_at": self.last_at}
@@ -252,9 +271,9 @@ class GmailApi:
 
     def thread(self, thread_id: str) -> Thread:
         r = self._ok(self._s.get(f"{GMAIL}/threads/{thread_id}", timeout=60, params=[
-            ("format", "metadata"), *(("metadataHeaders", h) for h in ("Subject", "Message-ID", "From", "To", "Cc"))]))
+            ("format", "metadata"), *(("metadataHeaders", h) for h in HEADERS)]))
         msgs = r.get("messages", [])
-        ids, people, first_subject = [], set(), ""
+        ids, people, first_subject, parsed = [], set(), "", []
         for i, msg in enumerate(msgs):
             h = {x["name"].lower(): x["value"] for x in msg.get("payload", {}).get("headers", [])}
             if i == 0:
@@ -262,9 +281,10 @@ class GmailApi:
             if h.get("message-id"):
                 ids.append(h["message-id"])
             for k in ("from", "to", "cc"):
-                people |= {a.lower() for a in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", h.get(k, ""))}
+                people |= set(_addresses(h.get(k, "")))
+            parsed.append(message_from_headers(str(msg.get("id", "")), int(msg.get("internalDate", 0) or 0), h))
         return Thread(thread_id, first_subject, ids, frozenset(people), str(msgs[-1].get("internalDate", ""))
-                      if msgs else "")
+                      if msgs else "", tuple(parsed))
 
     def send(self, msg: EmailMessage, thread_id: str | None = None) -> tuple[str, str]:
         """(gmail message id, thread id)."""
@@ -274,6 +294,25 @@ class GmailApi:
             payload["threadId"] = thread_id
         r = self._ok(self._s.post(f"{GMAIL}/messages/send", json=payload, timeout=60))
         return str(r.get("id", "")), str(r.get("threadId", ""))
+
+
+HEADERS = ("Subject", "Message-ID", "From", "To", "Cc", "Auto-Submitted", "X-Autoreply", "X-Autorespond",
+           "Precedence")
+
+
+def _addresses(text: str) -> list[str]:
+    return [a.lower() for a in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", text)]
+
+
+def message_from_headers(gmail_id: str, at_ms: int, h: Mapping[str, str]) -> Message:
+    """``h``: header (tên chữ thường). Phân loại thư tự động / bounce theo header (ARCHITECTURE 2.4-4)."""
+    sender = next(iter(_addresses(h.get("from", ""))), "")
+    subj = h.get("subject", "")
+    auto = (h.get("auto-submitted", "no").strip().lower() not in ("", "no") or bool(h.get("x-autoreply"))
+            or bool(h.get("x-autorespond")) or h.get("precedence", "").strip().lower() in ("bulk", "auto_reply", "junk")
+            or bool(re.match(r"^\s*(automatic reply|auto(-|\s)?reply|out of office|trả lời tự động)", subj, re.I)))
+    bounce = sender.split("@")[0] in ("mailer-daemon", "postmaster")
+    return Message(gmail_id, h.get("message-id", ""), sender, at_ms, subj, auto and not bounce, bounce)
 
 
 def find_loopmail(gmail: Any, title: str, brand_to: Sequence[str]) -> list[Thread]:

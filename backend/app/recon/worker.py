@@ -433,6 +433,7 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
     from app.recon.runner import (
         LOCK_KEY,
         persist,
+        run_followups,
         send_acceptance_emails,
         send_status_requests,
         stored_issued_at,
@@ -468,6 +469,8 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
             send_acceptance_emails(conn, plans,
                                    lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
                                    GmailApi(s), mail, now=now, run_id=run_id, st=st)
+            run_followups(conn, outcome.rows, outcome.done, tab, live.brand_emails, GmailApi(s), mail, now=now,
+                          run_id=run_id, st=st)
             conn.execute("UPDATE workflow_run SET finished_at = now(), status = 'OK', rows_scanned = %s WHERE id = %s",
                          (len(outcome.rows), run_id))
         except Exception as exc:
@@ -481,7 +484,8 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
         ("GHI FB.JT: TẮT" + (" (RECON_SHEET_WRITE_ID khác RECON_FBJT_ID)" if write_on else "")),
         (f"EMAIL {mail.mode.upper()}: đã gửi {st.emails_sent}, lỗi {st.emails_failed}"
          + (f", không gửi {dict(sorted(st.email_skipped.items()))}" if st.email_skipped else ""))
-        if mail.mode != "off" else "EMAIL: TẮT"]
+        if mail.mode != "off" else "EMAIL: TẮT",
+        f"GIAI ĐOẠN (Status U): {st.stage_moves} case đổi trạng thái"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

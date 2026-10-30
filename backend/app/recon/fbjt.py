@@ -116,6 +116,7 @@ class FbjtRow:
 class ParseOutcome:
     columns: Columns
     rows: list[FbjtRow] = field(default_factory=list)
+    done: list[FbjtRow] = field(default_factory=list)   # dòng Done (kết thúc case), không xử lý tiếp
     issues: list[tuple[int, str]] = field(default_factory=list)   # (dòng, mô tả) — dòng lỗi bị bỏ, không đoán
 
 
@@ -164,8 +165,7 @@ def parse_rows(values: Sequence[Sequence[Any]], *, header_row: int = HEADER_ROW)
         except ValueError as exc:
             out.issues.append((offset, str(exc)))
             continue
-        if not parsed.is_done:
-            out.rows.append(parsed)
+        (out.done if parsed.is_done else out.rows).append(parsed)
     return out
 
 
