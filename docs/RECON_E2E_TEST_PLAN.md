@@ -71,7 +71,7 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 | 37 | EMAIL BRAND sai dạng | `BRAND_EMAIL_INVALID` | |
 | 38 | Chạy lại | Không gửi thư trùng | |
 | 39 | > 5 ca DRAFT | Chỉ 5 thư, còn lại `MAX_PER_RUN`; lần sau gửi tiếp | |
-| 40 | Bảng confirm số trong thư (EMAIL 2) | Đúng bảng pháp nhân (EZS: VAT 8%, C 0%; SASSY: VAT 0%, cấn trừ 1%); A, B, C, D, F, E khớp file .docx; deadline = ngày gửi + 3 | |
+| 40 | Bảng confirm số trong thư (EMAIL 2) | Đúng bảng pháp nhân (EZS: VAT 8%, C 0%; SASSY: VAT 0%, cấn trừ 1%); A, B, C, D, F, E khớp file .docx; deadline = ngày gửi + 3 ngày làm việc | |
 | 41 | `RECON_EMAIL_MODE=abc` | Workflow báo lỗi cấu hình, không làm gì | |
 | 42 | Thư test của ca đã ghi I/K/M + TITLE MAIL đúng | Đầu thư: "Audit Gate: ĐẠT", loopmail = đúng thread | |
 | 43 | 2 thread cùng TITLE MAIL | Dashboard: "Chọn loopmail" 2 nút; chọn 1 → lần sau dùng thread đó | |
@@ -96,7 +96,7 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 ## 5. Trước khi chuyển sang thật
 
 - [ ] Toàn bộ 50 dòng ✅.
-- [ ] Đặt `RECON_EMAIL_SIGNER`. Chốt các điểm mâu thuẫn của mẫu Email 1/3/4 (OPEN_QUESTIONS Q15–Q18).
+- [ ] Đặt `RECON_EMAIL_SIGNER`. Email 1/3/4 làm xong theo chốt Q15–Q18.
 - [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `RECON_SCHEDULE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.
 - [ ] Chạy migration `0003` trên Neon main.
 - [ ] Lần đầu trên FB.JT thật: run-once **không ghi** → đọc báo cáo → mới bật ghi.
