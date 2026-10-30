@@ -32,7 +32,7 @@ from app.config import DEFAULT_TEMPLATES_DIR
 from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
-from app.recon.emailer import BbntMail, split_addresses
+from app.recon.emailer import BbntMail, camp_parts, split_addresses
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key, parse_rows, row_key
 from app.recon.rules import SCOPE_FROM, CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
@@ -294,11 +294,13 @@ def mail_for(p: CasePlan, issued_at: datetime, rows: Mapping[int, FbjtRow], bran
         return "RENDER_FAILED"
     if str(r.number) != p.bbnt_number:
         return "BBNT_NUMBER_CHANGED"
-    first = rows[p.rows[0]]
-    filename = "BBNT_" + re.sub(r'[\\/:*?"<>|\s]+', "_", str(r.number)) + ".docx"   # như API tải BBNT
-    return BbntMail(first.group, p.brands, r.entity.code, first.title_mail, p.campaign,
-                    str(r.number), r.contract.contract_no, r.nmv_vnd, _commission_k(r), r.gmv_vnd,
-                    list(dict.fromkeys(to)), filename, r.content)
+    first, c = rows[p.rows[0]], r.commission
+    name, month = camp_parts(p.campaign)          # mẫu: BBNT_{{BRAND}}_{{TEN_CAMP}}_{{THANG_NGHIEM_THU}}.docx
+    filename = re.sub(r'[\\/:*?"<>|\s]+', "_", f"BBNT_{'-'.join(p.brands)}_{name}_{month.replace('/', '-')}") + ".docx"
+    return BbntMail(first.group, p.brands, r.entity.code, first.title_mail, p.campaign, str(r.number),
+                    r.contract.contract_no, r.gmv_vnd, r.nmv.cancellation_rate, r.nmv_vnd, c.commission_rate,
+                    c.revenue, c.vat_amount, c.tax_deduction_amount, c.collected_on_behalf, c.consulting_fee,
+                    c.total_payable, c.tax_rate, list(dict.fromkeys(to)), filename, r.content)
 
 
 # --------------------------------------------------------------------------------------------------------- CLI

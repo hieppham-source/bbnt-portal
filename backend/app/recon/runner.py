@@ -41,7 +41,6 @@ from app.recon.emailer import (
     find_loopmail,
     in_send_window,
     recipients,
-    render_template,
 )
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key
 from app.recon.rules import CellAction, entity_code
@@ -223,11 +222,6 @@ def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
         return
     live = settings.mode == "live"
     kind = LIVE_KIND if live else KIND
-    template: str | None = None
-    if live:
-        row = conn.execute("SELECT body_html FROM email_template WHERE code = 'ACCEPTANCE' AND status = 'APPROVED' "
-                           "ORDER BY version DESC LIMIT 1").fetchone()
-        template = row[0] if row else None
     by_sid = {p.order_sheet_id: p for p in plans if p.action is Action.DRAFT and p.order_sheet_id}
     todo = conn.execute(
         "SELECT c.id, c.order_sheet_id, c.bbnt_issued_at, c.state, c.gmail_thread_id FROM recon_case c "
@@ -265,17 +259,13 @@ def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
         elif len(threads) > 1:
             conn.execute("UPDATE recon_case SET loopmail_candidates = %s WHERE id = %s",
                          (Jsonb([t.summary() for t in threads]), case_id))
-        html_body = None
-        if live and template is not None:
-            try:
-                html_body = render_template(template, mail)
-            except (KeyError, ValueError, IndexError):
-                extra.append("TEMPLATE_INVALID")
+        if live and not settings.signer:
+            extra.append("SIGNER_NOT_SET")                     # {{NGUOI_GUI}} của mẫu thư
         gate = evaluate_acceptance(AcceptanceFacts(
             non_op=True, order_links_found=1, order_link_readable=True, contracts_found=1,     # đã kiểm ở plan_cases
             contract_in_portal_master=True, generator_errors=0, figures_match_sheet=state == "FIGURES_WRITTEN",
             brand_emails=len(mail.brand_to), loopmail_threads_found=len(threads), already_sent=False,
-            template_configured=not live or template is not None, within_send_window=in_send_window(now),
+            template_configured=True, within_send_window=in_send_window(now),
             on_hold=False)).reasons + tuple(extra)
         conn.execute("UPDATE recon_case SET email_reasons = %s WHERE id = %s", (list(gate), case_id))
         if live and gate:
@@ -283,12 +273,11 @@ def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
                 skip[r] = skip.get(r, 0) + 1
             continue
         if live:
-            assert html_body is not None
-            msg, to_thread = build_live_reply(mail, threads[0], html_body), threads[0]
+            msg, to_thread = build_live_reply(mail, threads[0], now=now, signer=settings.signer), threads[0]
         else:
             loop = (f"{len(threads)} thread khớp" if len(threads) != 1 else f"thread {threads[0].id} — "
                     f"{threads[0].subject}")
-            msg, to_thread = build_test_message(mail, settings, TestNotes(gate, loop)), None
+            msg, to_thread = build_test_message(mail, settings, TestNotes(gate, loop), now=now), None
             if recipients(msg) != [settings.test_to]:          # chốt chặn cuối: thư test không bao giờ tới brand
                 raise EmailConfigError("Thư test có người nhận ngoài RECON_EMAIL_TEST_TO")
         _send_one(conn, case_id, kind, msg, to_thread, gmail, mail, now=now, run_id=run_id, st=st)

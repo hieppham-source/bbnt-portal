@@ -1,7 +1,7 @@
 # Worker đối soát — run-once: lập kế hoạch trên dữ liệu Google thật, LƯU trạng thái vào Postgres (idempotent).
 # Ghi ô I/K/M lên FB.JT CHỈ khi Variables RECON_SHEET_WRITE=on VÀ RECON_SHEET_WRITE_ID = RECON_FBJT_ID
 # (thử trên bản sao FB.JT trước). Email: RECON_EMAIL_MODE=off|test|live (test: chỉ tới RECON_EMAIL_TEST_TO; live: reply
-# loopmail khi Audit Gate đạt + mẫu ACCEPTANCE đã duyệt). Lịch 30 phút/lần chỉ khi RECON_SCHEDULE=on. Log chỉ có số đếm. Chạy tay: Actions -> recon-run-once.
+# loopmail khi Audit Gate đạt; chữ ký = RECON_EMAIL_SIGNER). Lịch 30 phút/lần chỉ khi RECON_SCHEDULE=on. Log chỉ có số đếm. Chạy tay: Actions -> recon-run-once.
 name: recon-run-once
 
 on:
@@ -38,6 +38,7 @@ jobs:
       RECON_EMAIL_MODE: ${{ vars.RECON_EMAIL_MODE }}
       RECON_EMAIL_TEST_TO: ${{ vars.RECON_EMAIL_TEST_TO }}
       RECON_EMAIL_MAX: ${{ vars.RECON_EMAIL_MAX }}
+      RECON_EMAIL_SIGNER: ${{ vars.RECON_EMAIL_SIGNER }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

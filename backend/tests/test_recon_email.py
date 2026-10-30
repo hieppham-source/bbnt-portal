@@ -1,4 +1,5 @@
 """Email chế độ test: chỉ gửi về hộp thư test, đúng 1 thư/case, không bao giờ tới brand."""
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -13,12 +14,14 @@ from app.recon.emailer import (
     EmailConfigError,
     EmailSettings,
     Thread,
+    acceptance_html,
+    acceptance_text,
     build_live_reply,
     build_test_message,
+    camp_parts,
     find_loopmail,
     in_send_window,
     recipients,
-    render_template,
     split_addresses,
     subject,
 )
@@ -32,7 +35,7 @@ from .test_recon_worker import ORDERS, ORG, row, sheet
 
 run = tw.run
 TEST = {"RECON_EMAIL_MODE": "test", "RECON_EMAIL_TEST_TO": "Hiep.Pham@hannaholala.com"}
-LIVE = {"RECON_EMAIL_MODE": "live"}
+LIVE = {"RECON_EMAIL_MODE": "live", "RECON_EMAIL_SIGNER": " Hiệp  Phạm "}
 LOOP = Thread("t1", "RE: BBNT BDAY T5", ["<a@x>", "<b@x>"], frozenset({"kt@brand.vn", "hiep.pham@hannaholala.com"}))
 
 
@@ -54,15 +57,20 @@ class FakeGmail:
             raise RuntimeError("Gmail HTTP 500")
         self.sent.append((msg, thread_id))
         return f"gm{len(self.sent)}", thread_id or "new"
+D = Decimal
 MAIL = BbntMail("ORGANICA", ["ORGANICA"], "EZS", "BBNT BDAY T5", "BDAY - 05/2026", "10.26/BBNT-X", "01/2026/HĐ",
-                Decimal(1_000_000), Decimal(216_000), Decimal(1_200_000), ["kt@brand.vn"], "BBNT_x.docx", b"PK")
+                D(1_200_000), D("0.166667"), D(1_000_000), D("0.2"), D(200_000), D(16_000), D(0), D(0), D(0),
+                D(216_000), D("0.08"), ["kt@brand.vn"], "BBNT_x.docx", b"PK")
+SASSY = BbntMail("SHISEIDO_GRP", ["ANESSA", "SHISEIDO"], "SASSY", "T", "Q3 - 09/2026", "N", "HĐ", D(100), None,
+                 D(100), D("0.15"), D(15), D(0), D("0.15"), D(0), D(0), D("14.85"), D("0.01"), ["a@b.vn"], "x", b"")
+NOW = datetime(2026, 10, 28, 2, 0, tzinfo=UTC)
 
 
 def test_settings_default_off_and_rejects_bad_mode_or_outside_address():
     assert EmailSettings.from_env({}).mode == "off"
     s = EmailSettings.from_env(TEST)
     assert (s.mode, s.test_to, s.max_per_run) == ("test", "hiep.pham@hannaholala.com", 5)
-    assert EmailSettings.from_env(LIVE) == EmailSettings("live", "", 5)
+    assert EmailSettings.from_env(LIVE) == EmailSettings("live", "", 5, "Hiệp Phạm")
     for bad in ({"RECON_EMAIL_MODE": "send"}, {**TEST, "RECON_EMAIL_TEST_TO": "kt@brand.vn"},
                 {**TEST, "RECON_EMAIL_TEST_TO": "a@hannaholala.com,b@hannaholala.com"},
                 {"RECON_EMAIL_MODE": "test"}, {**TEST, "RECON_EMAIL_MAX": "x"}):
@@ -80,15 +88,16 @@ def test_addresses_and_subject():
 
 
 def test_test_message_goes_only_to_test_inbox():
-    msg = build_test_message(MAIL, EmailSettings.from_env(TEST))
+    msg = build_test_message(MAIL, EmailSettings.from_env(TEST), now=NOW)
     assert recipients(msg) == ["hiep.pham@hannaholala.com"] and msg["Cc"] is None
-    assert msg["Subject"] == "[TEST] ORGANICA x EZS - FB - BBNT BDAY T5"
+    assert msg["Subject"] == "[TEST] ORGANICA x EZS - FB - BDAY 05/26"
     text = msg.get_body(("plain",)).get_content()
-    assert "Khi chạy thật sẽ gửi To: kt@brand.vn" in text and INTERNAL_CC[0] in text and "216.000 đ" in text
+    assert "Khi chạy thật sẽ gửi To: kt@brand.vn" in text and INTERNAL_CC[0] in text
+    assert "Tổng tiền brand cần thanh toán thêm | 216.000 | E=A+B-C-D+F" in text and "trước ngày 31/10/2026" in text
     [att] = list(msg.iter_attachments())
     assert att.get_filename() == "BBNT_x.docx" and att.get_content() == b"PK"
     with pytest.raises(EmailConfigError):
-        build_test_message(MAIL, EmailSettings("off"))
+        build_test_message(MAIL, EmailSettings("off"), now=NOW)
 
 
 def test_parse_brand_emails_merges_duplicate_brand_rows():
@@ -111,6 +120,7 @@ def test_mail_for_renders_docx_and_reports_missing_email(run, master_tables):
     assert isinstance(m, BbntMail) and m.bbnt_number == p.bbnt_number and m.brand_to == ["kt@brand.vn"]
     assert m.attachment[:2] == b"PK" and m.attachment_name.endswith(".docx") and "/" not in m.attachment_name
     assert m.commission == next(c.target for c in p.cells if c.column == "commission")
+    assert m.attachment_name == "BBNT_ORGANICA_BDAY_05-26.docx" and m.e == m.a + m.b - m.c - m.d + m.f
     assert worker.mail_for(p, tw.NOW, by_row, {}, render) == "NO_BRAND_EMAIL"
     assert worker.mail_for(p, tw.NOW, by_row, {"organica": "sai"}, render) == "BRAND_EMAIL_INVALID"
     assert worker.mail_for(p, tw.NOW, by_row, {"organica": "a@b.vn"}, lambda *_: None) == "RENDER_FAILED"
@@ -122,19 +132,25 @@ def test_loopmail_match_needs_title_and_brand_participant():
     assert find_loopmail(FakeGmail(), "BBNT BDAY", ["kt@brand.vn"]) == []
 
 
-def test_live_reply_and_template():
-    html = render_template("<p>{brands} {bbnt_number} {nmv}</p>", MAIL)
-    assert html == "<p>ORGANICA 10.26/BBNT-X 1.000.000 đ</p>"
-    with pytest.raises(KeyError):
-        render_template("{unknown}", MAIL)
-    msg = build_live_reply(MAIL, LOOP, html)
+def test_email2_tables_follow_entity_and_live_reply_threads():
+    assert camp_parts("Mix Derma - 7/2026") == ("MIX DERMA", "07/26") and camp_parts("BDAY") == ("BDAY", "")
+    ezs = {r[0]: r for r in MAIL.rows()}
+    assert ezs["Tiền VAT"][1:3] == ("8%", "16.000") and ezs["Cấn trừ thuế"][1:3] == ("0%", "0")
+    assert ezs["Cancellation"][2] == "16,67%" and ezs["Tổng Commission được hưởng (chưa VAT)"][1] == "20%"
+    sassy = {r[0]: r for r in SASSY.rows()}
+    assert sassy["Tiền VAT"][1] == "0%" and sassy["Cấn trừ thuế"][1] == "1%" and sassy["Cancellation"][2] == "-"
+    assert SASSY.subject() == "SHISEIDO_GRP (ANESSA, SHISEIDO) x SASSY - FB - Q3 09/26"
+    assert "Hiệp" in acceptance_text(MAIL, "31/10/2026", "Hiệp") and "<script" not in acceptance_html(
+        BbntMail(**{**MAIL.__dict__, "brands": ["<script>"]}), "x", "y")
+    msg = build_live_reply(MAIL, LOOP, now=NOW, signer="Hiệp Phạm")
     assert recipients(msg)[0] == "kt@brand.vn" and set(recipients(msg)[1:]) == set(INTERNAL_CC)
     assert msg["Subject"] == "Re: BBNT BDAY T5" and msg["In-Reply-To"] == "<b@x>"
+    html = msg.get_body(("html",)).get_content()
+    assert "<b>216.000</b>" in html and "trước ngày <b>31/10/2026</b>" in html and "Hiệp Phạm" in html
     assert len(list(msg.iter_attachments())) == 1
 
 
 def test_send_window_is_weekday_office_hours_vn():
-    from datetime import UTC, datetime
     assert in_send_window(datetime(2026, 10, 28, 2, 0, tzinfo=UTC))             # T4 09:00 VN
     assert not in_send_window(datetime(2026, 10, 28, 12, 0, tzinfo=UTC))        # T4 19:00 VN
     assert not in_send_window(datetime(2026, 10, 31, 3, 0, tzinfo=UTC))         # T7

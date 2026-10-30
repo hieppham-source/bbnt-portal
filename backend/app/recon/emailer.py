@@ -5,7 +5,9 @@ Email nghiệm thu (gửi BBNT + số liệu) — docs/ARCHITECTURE.md 11.2, 15.
 * ``test``: thư CHỈ tới ``RECON_EMAIL_TEST_TO`` (1 địa chỉ @hannaholala.com), không CC, tiêu đề ``[TEST]``. Đầu thư
   ghi kết quả Audit Gate, loopmail tìm được và To/CC mà bản thật sẽ dùng — bot không gửi tới các địa chỉ đó.
 * ``live``: **reply vào loopmail có sẵn** (tìm theo TITLE MAIL + email brand; không tạo thread mới), To = DATA BRAND
-  ``EMAIL BRAND``, CC = email nội bộ, nội dung = mẫu ``ACCEPTANCE`` đã DUYỆT trong DB. Chỉ gửi khi Audit Gate đạt.
+  ``EMAIL BRAND``, CC = email nội bộ. Chỉ gửi khi Audit Gate đạt.
+* Nội dung = **EMAIL 2** của "Mẫu email nghiệm thu OM (Bot)" (Google Doc anh Hiệp gửi 30/10/2026): bảng confirm số
+  theo pháp nhân (EZS cộng VAT, SASSY cấn trừ thuế), deadline = ngày gửi + 3 ngày, đính kèm BBNT.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import html
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from email.message import EmailMessage
 from typing import Any
@@ -32,8 +34,7 @@ INTERNAL_CC = ("fb@hannaholala.com", "mcnolala@gmail.com", "admin@hannaholala.co
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 SEND_FROM, SEND_TO = time(8, 0), time(18, 0)      # khung giờ tự gửi, T2–T6 giờ VN
-#: Biến được dùng trong mẫu ACCEPTANCE (``{bbnt_number}``…). Biến lạ -> TEMPLATE_INVALID, không gửi.
-TEMPLATE_FIELDS = ("brands", "group", "campaign", "bbnt_number", "contract_no", "nmv", "gmv", "commission")
+DEADLINE_DAYS = 3                                 # mẫu: "{{DEADLINE}} = ngày gửi + 3 ngày"
 _EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
 
@@ -46,6 +47,7 @@ class EmailSettings:
     mode: str               # off | test | live
     test_to: str = ""
     max_per_run: int = 5
+    signer: str = ""        # {{NGUOI_GUI}} — chữ ký cuối thư (RECON_EMAIL_SIGNER); live bắt buộc
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> EmailSettings:
@@ -61,7 +63,8 @@ class EmailSettings:
             limit = int(env.get("RECON_EMAIL_MAX", "5") or "5")
         except ValueError as exc:
             raise EmailConfigError("RECON_EMAIL_MAX phải là số") from exc
-        return cls(mode, to if mode == "test" else "", max(0, min(limit, 50)))
+        return cls(mode, to if mode == "test" else "", max(0, min(limit, 50)),
+                   " ".join(env.get("RECON_EMAIL_SIGNER", "").split()))
 
 
 def split_addresses(text: str) -> list[str]:
@@ -84,7 +87,19 @@ def in_send_window(now: datetime) -> bool:
 
 
 def _vnd(v: Decimal) -> str:
-    return f"{v:,.0f}".replace(",", ".") + " đ"
+    return f"{v:,.0f}".replace(",", ".")
+
+
+def _pct(v: Decimal | None) -> str:
+    return "-" if v is None else f"{(v * 100).quantize(Decimal('0.01')).normalize():f}%".replace(".", ",")
+
+
+def camp_parts(campaign: str) -> tuple[str, str]:
+    """``'MIX - 07/2026'`` -> (``{{TEN_CAMP}}`` 'MIX', ``{{THANG_NGHIEM_THU}}`` '07/26')."""
+    m = re.match(r"^\s*(.+?)\s*-\s*(\d{1,2})\s*/\s*(\d{2,4})\s*$", campaign or "")
+    if not m:
+        return (campaign or "").strip().upper(), ""
+    return m[1].upper(), f"{int(m[2]):02d}/{m[3][-2:]}"
 
 
 @dataclass(frozen=True)
@@ -92,38 +107,97 @@ class BbntMail:
     group: str
     brands: list[str]
     entity: str             # EZS | SASSY
-    title: str              # cột TITLE MAIL (trống -> "" ; live chặn TITLE_MAIL_MISSING)
+    title: str              # cột TITLE MAIL (trống -> live chặn TITLE_MAIL_MISSING)
     campaign: str
     bbnt_number: str
     contract_no: str
-    nmv: Decimal
-    commission: Decimal     # cột K: sau VAT (EZS) / sau cấn trừ (Sassy)
     gmv: Decimal
+    cancel_rate: Decimal | None
+    nmv: Decimal
+    rate: Decimal           # % hoa hồng
+    a: Decimal              # commission chưa VAT
+    b: Decimal              # VAT (EZS)
+    c: Decimal              # cấn trừ thuế (SASSY)
+    d: Decimal              # thu hộ brand
+    f: Decimal              # phí tư vấn
+    e: Decimal              # tổng brand thanh toán thêm = A + B - C - D + F
+    vat_rate: Decimal       # % VAT (EZS) hoặc % cấn trừ (SASSY) theo pháp nhân
     brand_to: list[str]
     attachment_name: str
     attachment: bytes
 
-    def fields(self) -> dict[str, str]:
-        return {"brands": ", ".join(self.brands), "group": self.group, "campaign": self.campaign,
-                "bbnt_number": self.bbnt_number, "contract_no": self.contract_no, "nmv": _vnd(self.nmv),
-                "gmv": _vnd(self.gmv), "commission": _vnd(self.commission)}
+    @property
+    def commission(self) -> Decimal:
+        """Cột K FB.JT = A + B - C."""
+        return self.a + self.b - self.c
+
+    def subject(self) -> str:
+        """Mẫu: ``{{GROUP_BRAND}} ({{BRAND}}) x {{PHAP_NHAN}} - FB - {{TEN_CAMP}} {{THANG_NGHIEM_THU}}``."""
+        name, month = camp_parts(self.campaign)
+        return subject(self.group, self.brands, self.entity, f"{name} {month}".strip())
+
+    def rows(self) -> list[tuple[str, str, str, str]]:
+        """Bảng confirm số (EMAIL 2) đúng pháp nhân: (khoản, tỷ lệ, thành tiền, ghi chú)."""
+        ezs = self.entity == "EZS"
+        return [("GMV from HRV", "", _vnd(self.gmv), ""), ("Cancellation", "", _pct(self.cancel_rate), ""),
+                ("NMV", "", _vnd(self.nmv), ""),
+                ("Tổng Commission được hưởng (chưa VAT)", _pct(self.rate), _vnd(self.a), "A"),
+                ("Tiền VAT", _pct(self.vat_rate) if ezs else "0%", _vnd(self.b), "B"),
+                ("Cấn trừ thuế", "0%" if ezs else _pct(self.vat_rate), _vnd(self.c), "C"),
+                ("Số tiền thu hộ brand", "", _vnd(self.d), "D"), ("Phí tư vấn", "", _vnd(self.f), "F"),
+                ("Tổng tiền brand cần thanh toán thêm", "", _vnd(self.e), "E=A+B-C-D+F")]
+
+
+def deadline(now: datetime) -> str:
+    return (now.astimezone(VN).date() + timedelta(days=DEADLINE_DAYS)).strftime("%d/%m/%Y")
+
+
+def acceptance_text(m: BbntMail, due: str, signer: str) -> str:
+    """EMAIL 2 — bản chữ (phần thân thư, sau phần ghi chú của thư test)."""
+    name, month = camp_parts(m.campaign)
+    head = f"{', '.join(m.brands)} {name} {month}".strip()
+    table = [head] + [" | ".join(x for x in r if x) for r in m.rows()]
+    return "\n".join([
+        f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
+        f"Cảm ơn anh/chị đã cập nhật status đơn hàng. Hannah gửi anh/chị số liệu nghiệm thu campaign "
+        f"{name} {month} như sau:".replace("  ", " "), "", *table, "",
+        "Đính kèm là biên bản nghiệm thu tương ứng. Nhờ anh/chị:",
+        "1. Kiểm tra và xác nhận số liệu trên bằng cách reply mail này;",
+        "2. Ký, đóng dấu biên bản nghiệm thu và gửi lại bản scan cho Hannah,",
+        f"trước ngày {due}. Nếu có chênh lệch số liệu, anh/chị phản hồi chi tiết đơn hàng trong cùng thời hạn "
+        "để hai bên đối chiếu.",
+        "Sau khi nhận được xác nhận, Hannah sẽ gửi hóa đơn nháp để anh/chị kiểm tra.", "",
+        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)", "Hannah Olala"])
+
+
+def acceptance_html(m: BbntMail, due: str, signer: str) -> str:
+    """EMAIL 2 — bản HTML (bảng confirm số như mẫu)."""
+    e = html.escape
+    name, month = camp_parts(m.campaign)
+    td = 'style="border:1px solid #999;padding:4px 8px"'
+    rows = "".join(
+        f"<tr><td {td}>{'<b>' + e(r[0]) + '</b>' if r[3].startswith('E') else e(r[0])}</td><td {td}>{e(r[1])}</td>"
+        f'<td {td} align="right">{"<b>" + e(r[2]) + "</b>" if r[3].startswith("E") else e(r[2])}</td>'
+        f"<td {td}>{e(r[3])}</td></tr>" for r in m.rows())
+    camp = e(f"{name} {month}".strip())
+    return (
+        f"<p>Kính gửi anh/chị team {e(', '.join(m.brands))},</p>"
+        f"<p>Cảm ơn anh/chị đã cập nhật status đơn hàng. Hannah gửi anh/chị số liệu nghiệm thu campaign "
+        f"<b>{camp}</b> như sau:</p>"
+        f'<table style="border-collapse:collapse"><tr><th {td}>{e(", ".join(m.brands))} {camp}</th><th {td}></th>'
+        f"<th {td}>Thành tiền</th><th {td}>Ghi chú</th></tr>{rows}</table>"
+        "<p>Đính kèm là <b>biên bản nghiệm thu</b> tương ứng. Nhờ anh/chị:</p><ol>"
+        "<li>Kiểm tra và <b>xác nhận số liệu</b> trên bằng cách reply mail này;</li>"
+        "<li><b>Ký, đóng dấu biên bản nghiệm thu</b> và gửi lại bản scan cho Hannah,</li></ol>"
+        f"<p>trước ngày <b>{e(due)}</b>. Nếu có chênh lệch số liệu, anh/chị phản hồi chi tiết đơn hàng trong cùng "
+        "thời hạn để hai bên đối chiếu.</p>"
+        "<p>Sau khi nhận được xác nhận, Hannah sẽ gửi hóa đơn nháp để anh/chị kiểm tra.</p>"
+        f"<p>Trân trọng,<br>{e(signer)}<br>Hannah Olala</p>")
 
 
 def body(m: BbntMail) -> str:
-    """Nội dung mặc định (chế độ test, chưa có mẫu duyệt)."""
-    f = m.fields()
-    return "\n".join([
-        f"Kính gửi Quý đối tác {f['brands']},", "",
-        f"HannahOlala gửi Biên bản nghiệm thu (BBNT) chương trình {m.campaign} như file đính kèm:",
-        f"- Số BBNT: {m.bbnt_number}", f"- Hợp đồng: {m.contract_no}", f"- Doanh thu thực (NMV): {f['nmv']}",
-        f"- GMV: {f['gmv']}", f"- Hoa hồng: {f['commission']}", "",
-        "Quý đối tác vui lòng kiểm tra, ký BBNT và phản hồi trong luồng mail này giúp HannahOlala.", "",
-        "Trân trọng,", "HannahOlala"])
-
-
-def render_template(body_html: str, m: BbntMail) -> str:
-    """Mẫu ``ACCEPTANCE`` đã duyệt: ``{bbnt_number}``… -> giá trị (đã escape HTML). Biến lạ -> ``KeyError``."""
-    return body_html.format_map({k: html.escape(v) for k, v in m.fields().items()})
+    """Bản lưu ``email_outbox.body_html`` (không phụ thuộc ngày gửi)."""
+    return acceptance_text(m, "{{DEADLINE}}", "{{NGUOI_GUI}}")
 
 
 # ----------------------------------------------------------------------------------------------- loopmail
@@ -219,26 +293,28 @@ class TestNotes:
     extra: list[str] = field(default_factory=list)
 
 
-def build_test_message(m: BbntMail, settings: EmailSettings, notes: TestNotes | None = None) -> EmailMessage:
+def build_test_message(m: BbntMail, settings: EmailSettings, notes: TestNotes | None = None, *,
+                       now: datetime) -> EmailMessage:
     """Thư test: To = ``settings.test_to`` duy nhất, không CC. To/CC thật chỉ in trong nội dung."""
     if settings.mode != "test" or not settings.test_to.endswith(TEST_DOMAIN):
         raise EmailConfigError("Chỉ gửi được ở chế độ test")
     n = notes or TestNotes()
     msg = EmailMessage()
     msg["To"] = settings.test_to
-    msg["Subject"] = "[TEST] " + subject(m.group, m.brands, m.entity, m.title or m.campaign)
+    msg["Subject"] = "[TEST] " + m.subject()
     msg.set_content("\n".join([
         "===== BẢN TEST — bot KHÔNG gửi thư này cho brand =====",
         "Audit Gate: " + ("ĐẠT — chế độ thật sẽ tự gửi" if not n.gate else "KHÔNG ĐẠT: " + ", ".join(n.gate)),
         f"Loopmail: {n.loopmail or '-'}",
         f"Khi chạy thật sẽ gửi To: {', '.join(m.brand_to)}",
         f"CC: {', '.join(cc_for(m))}", *n.extra,
-        "=====================================================", "", body(m)]))
+        "=====================================================", "",
+        acceptance_text(m, deadline(now), settings.signer)]))
     _attach(msg, m)
     return msg
 
 
-def build_live_reply(m: BbntMail, thread: Thread, body_html: str) -> EmailMessage:
+def build_live_reply(m: BbntMail, thread: Thread, *, now: datetime, signer: str) -> EmailMessage:
     """Reply vào loopmail: To brand, CC nội bộ, Re: tiêu đề thread, In-Reply-To/References để nối luồng phía brand."""
     msg = EmailMessage()
     msg["To"] = ", ".join(m.brand_to)
@@ -247,8 +323,9 @@ def build_live_reply(m: BbntMail, thread: Thread, body_html: str) -> EmailMessag
     if thread.message_ids:
         msg["In-Reply-To"] = thread.message_ids[-1]
         msg["References"] = " ".join(thread.message_ids)
-    msg.set_content(re.sub(r"<[^>]+>", "", body_html))
-    msg.add_alternative(body_html, subtype="html")
+    due = deadline(now)
+    msg.set_content(acceptance_text(m, due, signer))
+    msg.add_alternative(acceptance_html(m, due, signer), subtype="html")
     _attach(msg, m)
     return msg
 
