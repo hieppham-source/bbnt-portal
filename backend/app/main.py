@@ -18,6 +18,7 @@ from app.api import deps
 from app.api.v1.bbnt import issue_out
 from app.api.v1.bbnt import router as bbnt_router
 from app.api.v1.master import router as master_router
+from app.api.v1.recon import router as recon_router
 from app.config import Settings, get_settings
 from app.core.calculation import RowIssue
 from app.errors import BbntError
@@ -53,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(bbnt_router)
     app.include_router(master_router)
+    app.include_router(recon_router)
 
     @app.get("/", include_in_schema=False)
     def root() -> dict[str, str]:

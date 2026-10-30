@@ -44,6 +44,8 @@ class Settings:
     timezone: str = "Asia/Ho_Chi_Minh"
     # Bật lại gộp nhiều link / tách camp / tách tab (ARCHITECTURE 14.1). Mặc định tắt: 1 link order = 1 BBNT.
     allow_merged_bbnt: bool = False
+    database_url: str | None = None                    # Postgres đối soát (trang /reconcile); trống = tắt
+    recon_approvers: tuple[str, ...] = ()              # email được Đổi/Giữ ô, Giữ/Tiếp tục case
 
     @property
     def is_production(self) -> bool:
@@ -70,6 +72,8 @@ class Settings:
             templates_dir=e.get("TEMPLATES_DIR") or DEFAULT_TEMPLATES_DIR,
             timezone=e.get("APP_TIMEZONE", "Asia/Ho_Chi_Minh"),
             allow_merged_bbnt=e.get("ALLOW_MERGED_BBNT", "false").lower() in ("1", "true", "yes"),
+            database_url=e.get("DATABASE_URL") or None,
+            recon_approvers=tuple(x.lower() for x in _csv(e.get("RECON_APPROVERS"))),
         )
         s.validate()
         return s

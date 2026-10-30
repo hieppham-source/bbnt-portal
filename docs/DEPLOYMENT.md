@@ -59,3 +59,10 @@ khi chọn `report=true`. Lỗi bất ngờ chỉ in tên lỗi (ẩn chi tiết
 4. Chỉ khi bước 3 đúng: đặt lại `RECON_FBJT_ID` = FB.JT thật và `RECON_SHEET_WRITE_ID` = cùng ID đó.
 
 Tắt ghi ngay: xoá Variable `RECON_SHEET_WRITE` (hoặc đặt `off`).
+
+## Trang /reconcile (dashboard duyệt)
+
+- Backend Render cần thêm env: `DATABASE_URL` (cùng chuỗi Neon **main**, direct connection) và `RECON_APPROVERS`
+  (email được Đổi/Giữ ô và Giữ/Tiếp tục case, cách nhau dấu phẩy). Thiếu `DATABASE_URL` → trang báo 503.
+- Frontend: deploy lại Cloudflare (`deploy.cmd`) để có menu "Đối soát".
+- Mọi người đăng nhập @hannaholala.com xem được; quyền duyệt kiểm ở backend.

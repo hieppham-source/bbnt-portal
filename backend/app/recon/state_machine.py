@@ -73,6 +73,8 @@ def transition(current: State, to: State, *, trigger: Trigger, actor: str, at: d
                evidence_id: str | None = None) -> Transition:
     if current is State.DONE:
         raise InvalidTransition("Case đã DONE")
+    if to is current:      # vd Giữ case đang Giữ: sẽ ghi đè held_from, mất trạng thái để resume
+        raise InvalidTransition(f"Case đang {current.value}")
     if to is State.DONE and trigger is not Trigger.SHEET:
         raise InvalidTransition("Chỉ kế toán (đổi Status U trên FB.JT) mới kết thúc case")
     if to not in TRANSITIONS[current] and to not in UNIVERSAL:

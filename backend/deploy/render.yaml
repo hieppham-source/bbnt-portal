@@ -37,3 +37,7 @@ services:
         sync: false
       - key: CORS_ALLOWED_ORIGINS     # vd https://bbnt-portal-frontend.<account>.workers.dev (hoặc domain riêng)
         sync: false
+      - key: DATABASE_URL             # Neon Postgres (trang /reconcile) — direct connection, không pooler
+        sync: false
+      - key: RECON_APPROVERS          # email được duyệt trên /reconcile, cách nhau dấu phẩy
+        sync: false
