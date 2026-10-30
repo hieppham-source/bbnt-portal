@@ -7,7 +7,7 @@ Email nghiệm thu (gửi BBNT + số liệu) — docs/ARCHITECTURE.md 11.2, 15.
 * ``live``: **reply vào loopmail có sẵn** (tìm theo TITLE MAIL + email brand; không tạo thread mới), To = DATA BRAND
   ``EMAIL BRAND``, CC = email nội bộ. Chỉ gửi khi Audit Gate đạt.
 * Nội dung = **EMAIL 2** của "Mẫu email nghiệm thu OM (Bot)" (Google Doc anh Hiệp gửi 30/10/2026): bảng confirm số
-  theo pháp nhân (EZS cộng VAT, SASSY cấn trừ thuế), deadline = ngày gửi + 3 ngày, đính kèm BBNT.
+  theo pháp nhân (EZS cộng VAT, SASSY cấn trừ thuế), deadline = ngày gửi + 3 ngày làm việc (Q16), đính kèm BBNT.
 """
 from __future__ import annotations
 
@@ -16,13 +16,14 @@ import html
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from decimal import Decimal
 from email.message import EmailMessage
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.calculation import normalize_text
+from app.recon.rules import BusinessCalendar, confirm_deadline
 
 KIND = "ACCEPTANCE_TEST"
 LIVE_KIND = "ACCEPTANCE"
@@ -34,7 +35,6 @@ INTERNAL_CC = ("fb@hannaholala.com", "mcnolala@gmail.com", "admin@hannaholala.co
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 SEND_FROM, SEND_TO = time(8, 0), time(18, 0)      # khung giờ tự gửi, T2–T6 giờ VN
-DEADLINE_DAYS = 3                                 # mẫu: "{{DEADLINE}} = ngày gửi + 3 ngày"
 _EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
 
@@ -148,8 +148,9 @@ class BbntMail:
                 ("Tổng tiền brand cần thanh toán thêm", "", _vnd(self.e), "E=A+B-C-D+F")]
 
 
-def deadline(now: datetime) -> str:
-    return (now.astimezone(VN).date() + timedelta(days=DEADLINE_DAYS)).strftime("%d/%m/%Y")
+def deadline(now: datetime, cal: BusinessCalendar | None = None) -> str:
+    """``{{DEADLINE}}`` = ngày gửi + 3 **ngày làm việc** (anh Hiệp chốt 30/10/2026 — Q16, thay "+3 ngày" của mẫu)."""
+    return confirm_deadline(now.astimezone(VN).date(), cal or BusinessCalendar()).strftime("%d/%m/%Y")
 
 
 def acceptance_text(m: BbntMail, due: str, signer: str) -> str:
@@ -294,7 +295,7 @@ class TestNotes:
 
 
 def build_test_message(m: BbntMail, settings: EmailSettings, notes: TestNotes | None = None, *,
-                       now: datetime) -> EmailMessage:
+                       now: datetime, cal: BusinessCalendar | None = None) -> EmailMessage:
     """Thư test: To = ``settings.test_to`` duy nhất, không CC. To/CC thật chỉ in trong nội dung."""
     if settings.mode != "test" or not settings.test_to.endswith(TEST_DOMAIN):
         raise EmailConfigError("Chỉ gửi được ở chế độ test")
@@ -309,12 +310,13 @@ def build_test_message(m: BbntMail, settings: EmailSettings, notes: TestNotes | 
         f"Khi chạy thật sẽ gửi To: {', '.join(m.brand_to)}",
         f"CC: {', '.join(cc_for(m))}", *n.extra,
         "=====================================================", "",
-        acceptance_text(m, deadline(now), settings.signer)]))
+        acceptance_text(m, deadline(now, cal), settings.signer)]))
     _attach(msg, m)
     return msg
 
 
-def build_live_reply(m: BbntMail, thread: Thread, *, now: datetime, signer: str) -> EmailMessage:
+def build_live_reply(m: BbntMail, thread: Thread, *, now: datetime, signer: str,
+                     cal: BusinessCalendar | None = None) -> EmailMessage:
     """Reply vào loopmail: To brand, CC nội bộ, Re: tiêu đề thread, In-Reply-To/References để nối luồng phía brand."""
     msg = EmailMessage()
     msg["To"] = ", ".join(m.brand_to)
@@ -323,7 +325,7 @@ def build_live_reply(m: BbntMail, thread: Thread, *, now: datetime, signer: str)
     if thread.message_ids:
         msg["In-Reply-To"] = thread.message_ids[-1]
         msg["References"] = " ".join(thread.message_ids)
-    due = deadline(now)
+    due = deadline(now, cal)
     msg.set_content(acceptance_text(m, due, signer))
     msg.add_alternative(acceptance_html(m, due, signer), subtype="html")
     _attach(msg, m)

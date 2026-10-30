@@ -33,7 +33,7 @@ CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô tr�
 
 ## Email nghiệm thu
 - Variables: `RECON_EMAIL_MODE` = `off` (mặc định) | `test` | `live`; `RECON_EMAIL_TEST_TO` (test, 1 địa chỉ @hannaholala.com); `RECON_EMAIL_SIGNER` (tên ký cuối thư `{{NGUOI_GUI}}`, bắt buộc với live); `RECON_EMAIL_MAX` (mặc định 5, tối đa 50 thư/lần chạy).
-- Nội dung: **EMAIL 2** trong Google Doc "Mẫu email nghiệm thu OM (Bot)" (bảng confirm số theo pháp nhân, deadline = ngày gửi + 3 ngày, đính kèm `BBNT_<BRAND>_<CAMP>_<MM-YY>.docx`). Mẫu nằm trong code `app/recon/emailer.py`; sửa mẫu = sửa code qua PR (bảng `email_template` ghi nguồn + người duyệt).
+- Nội dung: **EMAIL 2** trong Google Doc "Mẫu email nghiệm thu OM (Bot)" (bảng confirm số theo pháp nhân, deadline = ngày gửi + 3 ngày làm việc, đính kèm `BBNT_<BRAND>_<CAMP>_<MM-YY>.docx`). Mẫu nằm trong code `app/recon/emailer.py`; sửa mẫu = sửa code qua PR (bảng `email_template` ghi nguồn + người duyệt).
 - **test**: mỗi case BBNT_DRAFTED / FIGURES_WRITTEN nhận đúng 1 thư `[TEST] ...` kèm BBNT .docx, chỉ tới `RECON_EMAIL_TEST_TO`. Đầu thư ghi kết quả Audit Gate, loopmail tìm được, To/CC thật. Không đổi trạng thái case.
 - **live**: chỉ khi Audit Gate đạt — case FIGURES_WRITTEN, có EMAIL BRAND, TITLE MAIL tìm được **đúng 1** loopmail (tiêu đề bỏ Re:/Fw: = TITLE MAIL và thread có email brand), có `RECON_EMAIL_SIGNER`, T2–T6 08:00–18:00 giờ VN. Reply vào loopmail (In-Reply-To/References), To brand, CC nội bộ. Case → ACCEPTANCE_SENT; bot không gửi lại.
 - Lý do chưa gửi hiện ở dashboard ("Email chưa gửi: ..."). Nhiều thread khớp → dashboard hiện nút "Chọn loopmail".

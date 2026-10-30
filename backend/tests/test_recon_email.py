@@ -93,7 +93,7 @@ def test_test_message_goes_only_to_test_inbox():
     assert msg["Subject"] == "[TEST] ORGANICA x EZS - FB - BDAY 05/26"
     text = msg.get_body(("plain",)).get_content()
     assert "Khi chạy thật sẽ gửi To: kt@brand.vn" in text and INTERNAL_CC[0] in text
-    assert "Tổng tiền brand cần thanh toán thêm | 216.000 | E=A+B-C-D+F" in text and "trước ngày 31/10/2026" in text
+    assert "Tổng tiền brand cần thanh toán thêm | 216.000 | E=A+B-C-D+F" in text and "trước ngày 02/11/2026" in text
     [att] = list(msg.iter_attachments())
     assert att.get_filename() == "BBNT_x.docx" and att.get_content() == b"PK"
     with pytest.raises(EmailConfigError):
@@ -146,8 +146,17 @@ def test_email2_tables_follow_entity_and_live_reply_threads():
     assert recipients(msg)[0] == "kt@brand.vn" and set(recipients(msg)[1:]) == set(INTERNAL_CC)
     assert msg["Subject"] == "Re: BBNT BDAY T5" and msg["In-Reply-To"] == "<b@x>"
     html = msg.get_body(("html",)).get_content()
-    assert "<b>216.000</b>" in html and "trước ngày <b>31/10/2026</b>" in html and "Hiệp Phạm" in html
+    assert "<b>216.000</b>" in html and "trước ngày <b>02/11/2026</b>" in html and "Hiệp Phạm" in html
     assert len(list(msg.iter_attachments())) == 1
+
+
+def test_deadline_is_three_business_days_with_approved_holidays():
+    from datetime import date
+
+    from app.recon.emailer import deadline
+    from app.recon.rules import BusinessCalendar
+    assert deadline(NOW) == "02/11/2026"                                       # T4 -> T5, T6, T2
+    assert deadline(NOW, BusinessCalendar(frozenset({date(2026, 10, 30)}))) == "03/11/2026"
 
 
 def test_send_window_is_weekday_office_hours_vn():

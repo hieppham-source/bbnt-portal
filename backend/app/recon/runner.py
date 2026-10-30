@@ -43,7 +43,7 @@ from app.recon.emailer import (
     recipients,
 )
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key
-from app.recon.rules import CellAction, entity_code
+from app.recon.rules import BusinessCalendar, CellAction, entity_code
 from app.recon.sheet_writer import CellResult, CellWrite
 from app.recon.state_machine import InvalidTransition, State, Trigger, transition
 from app.recon.worker import Action, CasePlan
@@ -222,6 +222,8 @@ def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
         return
     live = settings.mode == "live"
     kind = LIVE_KIND if live else KIND
+    cal = BusinessCalendar(frozenset(r[0] for r in conn.execute(
+        "SELECT day FROM holiday WHERE status = 'APPROVED'").fetchall()))      # ngày lễ đã duyệt -> hạn brand
     by_sid = {p.order_sheet_id: p for p in plans if p.action is Action.DRAFT and p.order_sheet_id}
     todo = conn.execute(
         "SELECT c.id, c.order_sheet_id, c.bbnt_issued_at, c.state, c.gmail_thread_id FROM recon_case c "
@@ -273,11 +275,11 @@ def send_acceptance_emails(conn: psycopg.Connection, plans: Sequence[CasePlan],
                 skip[r] = skip.get(r, 0) + 1
             continue
         if live:
-            msg, to_thread = build_live_reply(mail, threads[0], now=now, signer=settings.signer), threads[0]
+            msg, to_thread = build_live_reply(mail, threads[0], now=now, signer=settings.signer, cal=cal), threads[0]
         else:
             loop = (f"{len(threads)} thread khớp" if len(threads) != 1 else f"thread {threads[0].id} — "
                     f"{threads[0].subject}")
-            msg, to_thread = build_test_message(mail, settings, TestNotes(gate, loop), now=now), None
+            msg, to_thread = build_test_message(mail, settings, TestNotes(gate, loop), now=now, cal=cal), None
             if recipients(msg) != [settings.test_to]:          # chốt chặn cuối: thư test không bao giờ tới brand
                 raise EmailConfigError("Thư test có người nhận ngoài RECON_EMAIL_TEST_TO")
         _send_one(conn, case_id, kind, msg, to_thread, gmail, mail, now=now, run_id=run_id, st=st)
