@@ -1,5 +1,6 @@
 """
-Ghi số BBNT vào đúng 3 ô I/K/M của FB.JT (docs/ARCHITECTURE.md 12.1) — có kiểm soát:
+Ghi số BBNT vào đúng 3 ô I/K/M của FB.JT (docs/ARCHITECTURE.md 12.1) và Status U (tối đa tới "Đã done BBNT +
+Chờ KT xuất HĐ nháp", anh Hiệp chốt 30/10/2026) — có kiểm soát:
 
 1. Đọc lại ô ngay trước khi ghi (kèm công thức). Khác giá trị bot thấy lúc quét, hoặc là công thức -> CONFLICT,
    không ghi (người vừa sửa / ô không phải số nhập tay).
@@ -16,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
 
-from app.core.calculation import parse_money
+from app.core.calculation import normalize_text, parse_money
 
 SHEETS = "https://sheets.googleapis.com/v4/spreadsheets"
 
@@ -25,8 +26,8 @@ SHEETS = "https://sheets.googleapis.com/v4/spreadsheets"
 class CellWrite:
     row: int                  # số dòng như Sheets hiển thị
     column: str               # chữ cột, vd "I"
-    seen: Decimal | None      # giá trị bot thấy lúc quét (None = ô trống)
-    target: Decimal
+    seen: Decimal | str | None    # giá trị bot thấy lúc quét (None = ô trống)
+    target: Decimal | str         # str = ô chữ (Status U), so sánh sau normalize_text
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,14 @@ def _num(v: Any) -> Decimal | None:
         return None
 
 
+def _matches(v: Any, x: Decimal | str | None, text: bool) -> bool:
+    return normalize_text(str(v or "")) == normalize_text(str(x or "")) if text else _num(v) == x
+
+
+def _raw(t: Decimal | str) -> Any:
+    return t if isinstance(t, str) else int(t) if t == t.to_integral() else str(t)
+
+
 def write_cells(session: Any, spreadsheet_id: str, tab: str, writes: Sequence[CellWrite]) -> list[CellResult]:
     if not writes:
         return []
@@ -78,15 +87,13 @@ def write_cells(session: Any, spreadsheet_id: str, tab: str, writes: Sequence[Ce
         v = values[i] if i < len(values) else None
         if isinstance(f, str) and f.startswith("="):
             results[i] = CellResult(w, "CONFLICT", v, note="ô là công thức")
-        elif _num(v) != w.seen:
+        elif not _matches(v, w.seen, isinstance(w.target, str)):
             results[i] = CellResult(w, "CONFLICT", v, note="ô đã đổi so với lúc quét")
         else:
             todo.append(i)
     if todo:
         body = {"valueInputOption": "RAW",
-                "data": [{"range": ranges[i], "values": [[int(writes[i].target)
-                                                          if writes[i].target == writes[i].target.to_integral()
-                                                          else str(writes[i].target)]]} for i in todo]}
+                "data": [{"range": ranges[i], "values": [[_raw(writes[i].target)]]} for i in todo]}
         r = session.post(f"{SHEETS}/{quote(spreadsheet_id, safe='')}/values:batchUpdate", json=body, timeout=30)
         if r.status_code != 200:
             for i in todo:
@@ -96,7 +103,7 @@ def write_cells(session: Any, spreadsheet_id: str, tab: str, writes: Sequence[Ce
         after = _get(session, spreadsheet_id, [ranges[i] for i in todo], "UNFORMATTED_VALUE")
         for k, i in enumerate(todo):
             a = after[k] if k < len(after) else None
-            ok = _num(a) == writes[i].target
+            ok = _matches(a, writes[i].target, isinstance(writes[i].target, str))
             results[i] = CellResult(writes[i], "VERIFIED" if ok else "FAILED", values[i], a,
                                     "" if ok else "đọc lại không khớp")
     return [results[i] for i in range(len(writes))]

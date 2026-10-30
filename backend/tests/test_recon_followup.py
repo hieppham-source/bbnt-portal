@@ -133,3 +133,66 @@ def test_auto_reply_and_bounce_headers():
     human = message_from_headers("m", 0, {"from": "kt@brand.vn", "auto-submitted": "no", "subject": "Re: BBNT"})
     assert (auto.auto, ooo.auto, bounce.bounce, human.auto, human.bounce) == (True, True, True, False, False)
     assert message_from_headers("m", 0, {"from": "fb@hannaholala.com"}).internal
+
+
+# ----------------------------------------------------------------------------------------------- bot ghi Status U
+def _u_plan(conn, status):
+    from app.recon.followup import status_writes
+    return [(w.row.status, w.target) for w in status_writes(conn, parse_rows(sheet(row(*ORG, status=status))).rows,
+                                                            "FB-2026")]
+
+
+def test_status_u_after_email1(conn, run):
+    from app.recon.followup import U_DATA
+    gmail = FakeGmail()
+    from .test_recon_runner import _status
+    _status(conn, run, gmail, LIVE)                                   # Email 1 thật
+    assert _u_plan(conn, "") == [("", U_DATA)]
+    assert _u_plan(conn, U_DATA) == []                                # đã đúng -> không ghi lại
+
+
+def test_status_u_after_email2_and_brand_confirm_stops_at_done_bbnt(conn, run):
+    from app.recon.followup import U_CONFIRM, U_DATA, U_DONE_BBNT
+    sent_case(conn, run, FakeGmail())                                 # Email 2 thật -> ACCEPTANCE_SENT
+    assert _u_plan(conn, U_DATA) == [(U_DATA, U_CONFIRM)]
+    conn.execute("UPDATE recon_case SET brand_confirmed_at = now(), brand_confirmed_by = 'kam@hannaholala.com'")
+    assert _u_plan(conn, U_CONFIRM) == [(U_CONFIRM, U_DONE_BBNT)]
+    assert _u_plan(conn, "Đã có BBNT + Chờ Admin Check") == [("Đã có BBNT + Chờ Admin Check", U_DONE_BBNT)]
+    for later in (U_DONE_BBNT, DRAFT_U, ISSUED_U, "status lạ"):
+        assert _u_plan(conn, later) == []                             # không ghi lùi / vượt quyền kế toán
+    conn.execute("UPDATE recon_case SET state = 'ON_HOLD', held_from = 'ACCEPTANCE_SENT'")
+    assert _u_plan(conn, U_CONFIRM) == []
+
+
+def test_test_mode_emails_never_change_status_u(conn, run):
+    from .test_recon_email import TEST
+    from .test_recon_runner import _status
+    _status(conn, run, FakeGmail(), TEST)
+    assert _u_plan(conn, "") == []
+
+
+def test_write_status_audits_and_counts(conn, run):
+    from app.recon.followup import U_CONFIRM
+    from app.recon.sheet_writer import CellResult
+    gmail = FakeGmail()
+    sent_case(conn, run, gmail)
+    rows = parse_rows(sheet(row(*ORG, status=""))).rows
+    got = []
+
+    def writer(ws):
+        got.extend(ws)
+        return [CellResult(w, "VERIFIED", w.seen, w.target) for w in ws]
+    st = RunStats()
+    from app.recon.runner import write_status
+    write_status(conn, rows, writer, "U", "FB-2026", now=NOW, run_id=uuid.uuid4(), st=st)
+    assert [(w.row, w.column, w.seen, w.target) for w in got] == [(7, "U", "", U_CONFIRM)] and st.status_written == 1
+    assert one(conn, "SELECT entity_id, after->>'target' FROM audit_log WHERE action = 'SHEET_WRITE'") == (
+        "U7", U_CONFIRM)
+
+
+def test_confirmed_case_gets_no_bbnt_reminder(conn, run):
+    gmail = FakeGmail()
+    sent_case(conn, run, gmail)
+    conn.execute("UPDATE recon_case SET brand_confirmed_at = now()")
+    follow(conn, gmail, now=at(3))
+    assert one(conn, "SELECT count(*) FROM email_outbox WHERE kind = 'CONFIRM_BBNT_REMINDER'")[0] == 0

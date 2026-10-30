@@ -10,6 +10,7 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 ## Migration
 - Trước khi chạy: backup (`pg_dump "$DATABASE_URL" > backup.sql`, Neon cũng có point-in-time restore).
 - Up lỗi giữa chừng: file chạy trong 1 transaction → không để lại bảng dở (có test).
+- Rollback 0006 (chạy trước 0005): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0006_recon_brand_confirmed.down.sql`.
 - Rollback 0005 (chạy trước 0004): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0005_recon_followups.down.sql`.
 - Rollback 0004 (chạy trước 0003): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0004_recon_status_emails.down.sql`.
 - Rollback 0003 (chạy trước 0002): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0003_recon_email.down.sql` — xoá thư test trong `email_outbox`, giữ `audit_log`.
@@ -44,7 +45,8 @@ CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô tr�
 - Xem: `SELECT o.kind, o.subject, o.status, o.last_error, c.bbnt_number FROM email_outbox o JOIN recon_case c ON c.id = o.case_id ORDER BY o.created_at DESC;`
 
 ## Sau email nghiệm thu
-- Giai đoạn đi theo Status U do kế toán cập nhật (bot không ghi U). Dashboard có thêm "Chờ confirm HĐ nháp", "Chờ thanh toán".
+- **Bot ghi Status U** (khi `RECON_SHEET_WRITE=on`), chỉ tiến lên, tối đa tới "Đã done BBNT + Chờ KT xuất HĐ nháp": gửi Email 1 thật → "Brand chưa gửi data"; gửi Email 2 thật → "Đã Confirm số + Chờ brand gửi BBNT"; KAM bấm **Brand đã confirm** trên dashboard → "Đã done BBNT + Chờ KT xuất HĐ nháp". Đọc lại ô trước khi ghi (người vừa đổi → không ghi), không ghi lùi, không ghi khi case đang Giữ, thư test không làm đổi U. Hoàn tác: `audit_log` SHEET_WRITE ô `U<dòng>`.
+- Từ HĐ nháp trở đi kế toán cập nhật U; case đi theo. Dashboard có thêm "Chờ confirm HĐ nháp", "Chờ thanh toán".
 - **Brand trả lời chưa xem**: thư brand gửi vào loopmail; mở Gmail đọc rồi bấm "Đã xem". Thư lỗi gửi (bounce) → kiểm tra EMAIL BRAND.
 - **3A / 3B** (nhắc ký BBNT / confirm HĐ nháp): hiện ở "Thư chờ duyệt" khi quá hạn 3 ngày làm việc, sau đó 3 ngày/lần.
 - **4A / 4B** (nhắc thanh toán): tự gửi từ ngày đến hạn (ngày HĐ trong ghi chú cột "Oanh note…" + 10 ngày làm việc), 3 ngày/lần; 4B có phạt ước tính. Không đọc được số/ngày HĐ → "Email chưa gửi: INVOICE_UNREADABLE". Brand đã trả lời sau lần nhắc trước → `BRAND_REPLIED`, bot dừng; KAM xử lý rồi (nếu cần nhắc tiếp) đánh dấu đã xem + chờ chu kỳ sau.

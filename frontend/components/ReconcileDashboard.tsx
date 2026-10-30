@@ -8,6 +8,7 @@ import {
   decideEmail,
   decideReview,
   holdCase,
+  markBrandConfirmed,
   markReplySeen,
   type ReconCase,
   type ReconEmail,
@@ -320,6 +321,20 @@ export default function ReconcileDashboard() {
                   )}
                 </td>
                 <td>
+                  {canApprove && c.state === "ACCEPTANCE_SENT" && !c.brand_confirmed_at && (
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      title="Brand đã confirm số + BBNT trong loopmail. Bot sẽ ghi Status U = Đã done BBNT + Chờ KT xuất HĐ nháp."
+                      onClick={() => {
+                        if (window.confirm("Brand đã confirm số và BBNT? Bot sẽ ghi Status U = Đã done BBNT."))
+                          void act(() => markBrandConfirmed(token, c.id))
+                      }}
+                    >
+                      Brand đã confirm
+                    </button>
+                  )}
+                  {c.brand_confirmed_at && <div className="muted">Brand đã confirm</div>}
                   {canApprove && c.state === "ON_HOLD" && (
                     <button disabled={busy} onClick={() => act(() => resumeCase(token, c.id))}>
                       Tiếp tục
