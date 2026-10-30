@@ -438,6 +438,7 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
         send_status_requests,
         stored_issued_at,
         write_back,
+        write_status,
     )
     from app.recon.sheet_writer import write_cells
 
@@ -471,6 +472,9 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
                                    GmailApi(s), mail, now=now, run_id=run_id, st=st)
             run_followups(conn, outcome.rows, outcome.done, tab, live.brand_emails, GmailApi(s), mail, now=now,
                           run_id=run_id, st=st)
+            if write_ok:          # U: chỉ tiến lên, tối đa "Đã done BBNT + Chờ KT xuất HĐ nháp"
+                write_status(conn, outcome.rows, lambda ws: write_cells(s, fbjt_id, tab, ws),
+                             outcome.columns.letter("status"), tab, now=now, run_id=run_id, st=st)
             conn.execute("UPDATE workflow_run SET finished_at = now(), status = 'OK', rows_scanned = %s WHERE id = %s",
                          (len(outcome.rows), run_id))
         except Exception as exc:
@@ -480,7 +484,8 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
     return summary(plans) + [
         f"DB: case mới {st.cases_new}, chuyển trạng thái {st.transitions}, không đổi {st.unchanged}, "
         f"bot không chạm {st.untouched}, ô chờ ghi mới {st.writes_planned}, ô chờ duyệt mới {st.reviews_opened}",
-        ("GHI FB.JT: " + f"đã ghi {st.written}, xung đột {st.conflicts}, lỗi {st.failed}") if write_ok else
+        ("GHI FB.JT: " + f"đã ghi I/K/M {st.written}, Status U {st.status_written}, xung đột {st.conflicts}, "
+         f"lỗi {st.failed}") if write_ok else
         ("GHI FB.JT: TẮT" + (" (RECON_SHEET_WRITE_ID khác RECON_FBJT_ID)" if write_on else "")),
         (f"EMAIL {mail.mode.upper()}: đã gửi {st.emails_sent}, lỗi {st.emails_failed}"
          + (f", không gửi {dict(sorted(st.email_skipped.items()))}" if st.email_skipped else ""))

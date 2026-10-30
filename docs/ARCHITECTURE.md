@@ -784,7 +784,7 @@ Tính trên **K**, mọi hợp đồng đều có điều khoản 0,05%/ngày �
 ### 14.3 Phạm vi quét và trạng thái Done
 
 - Bot chỉ quét dòng FB.JT có U **khác Done** (`Done`, `Done trả tiền`).
-- **Chỉ kế toán** chuyển U sang Done = xác nhận đã nhận tiền. Bot không bao giờ ghi U.
+- **Chỉ kế toán** chuyển U sang Done = xác nhận đã nhận tiền. Bot không bao giờ ghi U. *(Sửa 30/10/2026: bot được ghi U tới "Đã done BBNT + Chờ KT xuất HĐ nháp" — xem mục 17.)*
 - Nhắc thanh toán chạy đến khi U = Done; phạt ước tính tính trên toàn bộ K (bot không theo dõi thanh toán một phần). Brand trả lời trong thread (báo trả một phần, gửi UNC…) → dừng tự gửi, chuyển KAM như 13.4-6.
 - UNC brand gửi chỉ được lưu làm bằng chứng và báo kế toán; không tự đổi trạng thái.
 
@@ -899,3 +899,4 @@ Làm rõ 15.2: đơn vị gửi nhắc là **1 loopmail**, không phải 1 brand
 - Mẫu email (30/10, Google Doc "Mẫu email nghiệm thu OM (Bot)"): thư nghiệm thu = EMAIL 2, hạn brand = ngày gửi + 3 ngày làm việc. Chốt Q15–Q18 (OPEN_QUESTIONS): bot tạo loopmail bằng Email 1 cho case mới (thay 15.4 cho case mới); thanh toán giữ 10 ngày làm việc + phạt ước tính; HĐ nháp do kế toán gửi.
 - Email 1 (30/10): tại G + 25 bot quét file order; còn dòng chưa có status → case WAITING `STATUS_INCOMPLETE`, **tự gửi** Email 1 (reply loopmail tay nếu tìm thấy theo TITLE MAIL, không thì tạo luồng mới và lưu làm loopmail). Quá hạn (3 ngày làm việc), sau đó 3 ngày/lần: thư nhắc **chờ duyệt** trên dashboard. Mọi dòng đã có status → lập BBNT, ghi I/K/M, Email 2 reply vào luồng đó; thư nhắc chưa gửi tự huỷ. Thay mốc "G + 25 lập BBNT ngay" trước đây. Email 4 không có dòng thông tin chuyển khoản.
 - Sau EMAIL 2 (30/10): case đi theo Status U (trigger SHEET) — HĐ nháp → AWAITING_INVOICE_CONFIRM, đã xuất HĐ → AWAITING_PAYMENT, Done → DONE (nhiều dòng: lấy giai đoạn chậm nhất; U lạ → giữ nguyên). Bot đọc metadata loopmail (không lưu nội dung): thư brand người thật → dashboard "Brand trả lời"; trả lời tự động / bounce đánh dấu riêng. 3A (U còn trước BBNT) và 3B (bản nhắc lại HĐ nháp) chờ duyệt; 4A từ **ngày đến hạn** (mẫu) và 4B quá hạn kèm phạt ước tính — tự gửi, 3 ngày/lần, dừng khi brand trả lời sau lần nhắc trước. Chưa đọc tab REMINDER LOG (lần nhắc tay) — chạy song song skill cũ phải tránh nhắc trùng S5.
+- Chốt 30/10/2026: **bot được ghi Status U**, chỉ tiến lên, tối đa tới "Đã done BBNT + Chờ KT xuất HĐ nháp" (BBNT tính bản online, không chờ bản cứng). Email 1 thật → "Brand chưa gửi data"; Email 2 thật → "Đã Confirm số + Chờ brand gửi BBNT"; brand confirm (KAM bấm "Brand đã confirm" trên portal — bot chưa tự đọc nội dung thư) → "Đã done BBNT + Chờ KT xuất HĐ nháp". Thay 2.3-7c và 14.3 về ghi U. Bot không ghi cột "Ngày cập nhật status".

@@ -4,7 +4,8 @@ phải hợp lệ theo :data:`TRANSITIONS`, có trigger + actor + bằng chứng
 (bảng ``state_transition``) trong cùng transaction với cập nhật case (optimistic lock ``state_version``).
 
 Tiến độ nghiệp vụ sau khi gửi nghiệm thu đi theo cột Status (U) do người cập nhật (:func:`stage_from_status`);
-bot không bao giờ ghi U và không bao giờ tự chuyển sang DONE (chỉ kế toán đổi U = Done).
+bot chỉ ghi U tới "Đã done BBNT + Chờ KT xuất HĐ nháp" (``followup.status_writes``) và không bao giờ tự chuyển
+sang DONE (chỉ kế toán đổi U = Done).
 """
 from __future__ import annotations
 

@@ -122,3 +122,13 @@ def test_0005_followup_templates_and_reply_columns(fresh_db: None) -> None:
     run_file("0005_recon_followups.down.sql")
     assert psql("SELECT count(*) FROM information_schema.columns WHERE table_name = 'email_message' "
                 "AND column_name = 'reviewed_at';").stdout.strip() == "0"
+
+
+def test_0006_brand_confirmed_columns_up_down(fresh_db: None) -> None:
+    for f in ("0006_recon_brand_confirmed", "0006_recon_brand_confirmed"):
+        run_file(f"{f}.up.sql")
+    q = ("SELECT count(*) FROM information_schema.columns WHERE table_name = 'recon_case' "
+         "AND column_name LIKE 'brand_conf%';")
+    assert psql(q).stdout.strip() == "2"
+    run_file("0006_recon_brand_confirmed.down.sql")
+    assert psql(q).stdout.strip() == "0"

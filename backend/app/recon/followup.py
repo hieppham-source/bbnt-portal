@@ -2,7 +2,10 @@
 Sau email nghiệm thu (EMAIL 2): theo dõi Status (U) + loopmail, nhắc theo mẫu "Mẫu email nghiệm thu OM (Bot)".
 
 * **Giai đoạn** đọc từ U (``stage_from_status``), áp lên case (trigger SHEET): HĐ nháp -> AWAITING_INVOICE_CONFIRM,
-  đã xuất HĐ -> AWAITING_PAYMENT, Done -> DONE. Bot không bao giờ ghi U.
+  đã xuất HĐ -> AWAITING_PAYMENT, Done -> DONE.
+* **Bot ghi U** (anh Hiệp chốt 30/10/2026), chỉ tiến lên, tối đa tới "Đã done BBNT + Chờ KT xuất HĐ nháp" (BBNT online,
+  không chờ bản cứng): gửi Email 1 -> "Brand chưa gửi data"; gửi Email 2 -> "Đã Confirm số + Chờ brand gửi BBNT";
+  KAM đánh dấu brand đã confirm -> "Đã done BBNT + Chờ KT xuất HĐ nháp". Từ HĐ nháp trở đi là của kế toán.
 * **Thư brand trả lời**: đọc metadata loopmail (không lưu nội dung), ghi ``email_message`` IN; thư người thật
   hiện ở dashboard để KAM xem. Thư tự động / bounce được đánh dấu riêng.
 * **3A** nhắc ký BBNT (U còn trước BBNT, quá Email 2 + 3 ngày làm việc, sau đó 3 ngày/lần) — chờ duyệt.
@@ -62,6 +65,7 @@ class FollowCase:
     rows: list[FbjtRow]
     done_rows: int
     since: datetime                    # lúc vào trạng thái hiện tại
+    confirmed: bool = False            # KAM đã đánh dấu brand confirm BBNT
 
     @property
     def stage(self) -> Stage | None:
@@ -92,12 +96,13 @@ def load_cases(conn: psycopg.Connection, rows: Sequence[FbjtRow], done: Sequence
     live = {(brand_key(r.brand), campaign_key(r.campaign)): r for r in rows}
     finished = {(brand_key(r.brand), campaign_key(r.campaign)) for r in done}
     out: dict[uuid.UUID, FollowCase] = {}
-    for cid, state, ver, thread, brands, camp, bk, ck, since in conn.execute(
+    for cid, state, ver, thread, brands, camp, bk, ck, since, confirmed in conn.execute(
             "SELECT c.id, c.state, c.state_version, c.gmail_thread_id, c.brand_codes, c.campaign, sr.brand_key, "
-            "sr.campaign_key, (SELECT max(at) FROM state_transition t WHERE t.case_id = c.id AND t.to_state = c.state) "
+            "sr.campaign_key, (SELECT max(at) FROM state_transition t WHERE t.case_id = c.id "
+            "AND t.to_state = c.state), c.brand_confirmed_at IS NOT NULL "
             "FROM recon_case c JOIN sheet_row sr ON sr.case_id = c.id AND sr.tab = %s WHERE c.state = ANY(%s) "
             "ORDER BY c.id", (tab, [s.value for s in FOLLOW])).fetchall():
-        fc = out.setdefault(cid, FollowCase(cid, State(state), ver, thread, brands, camp, [], 0, since))
+        fc = out.setdefault(cid, FollowCase(cid, State(state), ver, thread, brands, camp, [], 0, since, confirmed))
         if (bk, ck) in live:
             fc.rows.append(live[(bk, ck)])
         elif (bk, ck) in finished:
@@ -250,7 +255,7 @@ def send_followups(conn: psycopg.Connection, cases: Sequence[FollowCase], thread
             bump(to)
             continue
         th = threads.get(fc.id)
-        if fc.state is State.ACCEPTANCE_SENT and fc.rows and all(_pre_bbnt(r) for r in fc.rows):
+        if fc.state is State.ACCEPTANCE_SENT and not fc.confirmed and fc.rows and all(_pre_bbnt(r) for r in fc.rows):
             _queue_review(conn, fc, CONFIRM_BBNT + sfx, confirm_bbnt_text, to, th, settings, outbox, now=now, cal=cal,
                           start=_sent_at(conn, fc.id, "ACCEPTANCE" + ("" if live else "_TEST")) or fc.since)
         elif fc.state is State.AWAITING_INVOICE_CONFIRM:
@@ -338,8 +343,8 @@ def send_approved(conn: psycopg.Connection, cases: Sequence[FollowCase], threads
         for oid, case_id in conn.execute("SELECT id, case_id FROM email_outbox WHERE kind = %s AND status = 'QUEUED' "
                                          "ORDER BY created_at", (base + sfx,)).fetchall():
             fc = by_id.get(case_id)
-            if fc is None or fc.state is not STATE_OF[base] or (base == CONFIRM_BBNT and not all(
-                    _pre_bbnt(r) for r in fc.rows)):
+            if fc is None or fc.state is not STATE_OF[base] or (base == CONFIRM_BBNT and (fc.confirmed or not all(
+                    _pre_bbnt(r) for r in fc.rows))):
                 conn.execute("UPDATE email_outbox SET status = 'CANCELLED', last_error = 'STAGE_CHANGED' WHERE id = %s",
                              (oid,))
                 continue
@@ -352,3 +357,40 @@ def send_approved(conn: psycopg.Connection, cases: Sequence[FollowCase], threads
             guard(msg)
             deliver(conn, oid, fc.id, base + sfx, msg, th.id if live and th else None, gmail, live=live, now=now)
 
+
+
+# ----------------------------------------------------------------------------------------------- bot ghi Status U
+U_DATA, U_CONFIRM = "Brand chưa gửi data", "Đã Confirm số + Chờ brand gửi BBNT"
+U_HAS_BBNT, U_DONE_BBNT = "Đã có BBNT + Chờ Admin Check", "Đã done BBNT + Chờ KT xuất HĐ nháp"
+#: Thứ tự các giá trị U bot được ghi / được ghi đè. Giá trị khác (HĐ nháp, đã xuất HĐ, Done, lạ) -> không bao giờ ghi.
+U_RANK = {normalize_text(v): i for i, v in enumerate(["", U_DATA, U_CONFIRM, U_HAS_BBNT, U_DONE_BBNT])}
+
+
+@dataclass(frozen=True)
+class StatusWrite:
+    case_id: uuid.UUID
+    row: FbjtRow
+    target: str
+
+
+def status_writes(conn: psycopg.Connection, rows: Sequence[FbjtRow], tab: str) -> list[StatusWrite]:
+    """U cần ghi theo việc bot đã làm (chỉ thư THẬT đã gửi, không tính thư test). Chỉ tiến lên; case Giữ / Xong /
+    Lỗi không ghi."""
+    live = {(brand_key(r.brand), campaign_key(r.campaign)): r for r in rows}
+    out: list[StatusWrite] = []
+    for cid, confirmed, request, acceptance, bk, ck in conn.execute(
+            "SELECT c.id, c.brand_confirmed_at IS NOT NULL, "
+            "EXISTS (SELECT 1 FROM email_outbox o WHERE o.case_id = c.id AND o.kind = 'STATUS_REQUEST' "
+            "AND o.status = 'SENT'), "
+            "EXISTS (SELECT 1 FROM email_outbox o WHERE o.case_id = c.id AND o.kind = 'ACCEPTANCE' "
+            "AND o.status = 'SENT'), "
+            "sr.brand_key, sr.campaign_key FROM recon_case c JOIN sheet_row sr ON sr.case_id = c.id AND sr.tab = %s "
+            "WHERE c.state NOT IN ('ON_HOLD', 'DONE', 'ERROR') ORDER BY c.id", (tab,)).fetchall():
+        target = U_DONE_BBNT if confirmed else U_CONFIRM if acceptance else U_DATA if request else None
+        r = live.get((bk, ck))
+        if target is None or r is None:
+            continue
+        cur = U_RANK.get(normalize_text(r.status))
+        if cur is not None and cur < U_RANK[normalize_text(target)]:
+            out.append(StatusWrite(cid, r, target))
+    return out

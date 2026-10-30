@@ -113,6 +113,17 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 | 65 | Ghi chú HĐ sai dạng | `INVOICE_UNREADABLE`, không gửi | |
 | 66 | U = Done | Case "Xong", hết nhắc | |
 
+## 4e. Bot ghi Status U (`RECON_SHEET_WRITE=on`, email live với brand thử)
+
+| # | Dựng | Mong đợi | |
+|---|---|---|---|
+| 67 | Gửi Email 1 thật, U trống | U = "Brand chưa gửi data" | |
+| 68 | Gửi Email 2 thật | U = "Đã Confirm số + Chờ brand gửi BBNT" | |
+| 69 | Bấm "Brand đã confirm" | U = "Đã done BBNT + Chờ KT xuất HĐ nháp"; hết nhắc ký BBNT | |
+| 70 | Người sửa U ngay trước lần chạy | Bot không ghi (xung đột), có audit | |
+| 71 | U đã là HĐ nháp / Done / giá trị lạ | Bot không ghi | |
+| 72 | Email chế độ test | U không đổi | |
+
 ## 4c. Lịch
 
 | # | Dựng | Mong đợi | |
@@ -121,7 +132,7 @@ Mỗi dòng: cách dựng trên bản sao → kết quả phải thấy. Đánh 
 
 ## 5. Trước khi chuyển sang thật
 
-- [ ] Toàn bộ 66 dòng ✅.
+- [ ] Toàn bộ 72 dòng ✅.
 - [ ] Tắt bước S5 của skill nhắc cũ trước khi bật live.
 - [ ] Đặt `RECON_EMAIL_SIGNER`. Email 1/3/4 làm xong theo chốt Q15–Q18.
 - [ ] Đặt lại `RECON_FBJT_ID` = FB.JT thật, `RECON_SHEET_WRITE=off`, `RECON_EMAIL_MODE=off`, `RECON_SCHEDULE=off`, `DATABASE_URL` = Neon main (mật khẩu mới), Render về main.

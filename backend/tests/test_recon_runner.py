@@ -33,6 +33,7 @@ def conn() -> Iterator[psycopg.Connection]:
     run_file("0003_recon_email.up.sql")
     run_file("0004_recon_status_emails.up.sql")
     run_file("0005_recon_followups.up.sql")
+    run_file("0006_recon_brand_confirmed.up.sql")
     with psycopg.connect(URL or "", autocommit=True) as c:
         yield c
 
@@ -159,6 +160,11 @@ def test_sheet_writer_checks_before_and_after():
         == ["FAILED"]
     assert [r.status for r in write_cells(FakeSheet({}, sabotage=True), "sid", TAB, [CellWrite(7, "I", None, K)])] \
         == ["FAILED"]
+    u = FakeSheet({"'FB-2026'!U7": "brand chưa gửi  data", "'FB-2026'!U8": "Đã có BBNT + Chờ Admin Check"})
+    res = write_cells(u, "sid", TAB, [CellWrite(7, "U", "Brand chưa gửi data", "Đã Confirm số + Chờ brand gửi BBNT"),
+                                      CellWrite(8, "U", "Đã Confirm số + Chờ brand gửi BBNT", "x")])
+    assert [r.status for r in res] == ["VERIFIED", "CONFLICT"]                  # người vừa đổi U -> không ghi
+    assert u.cells["'FB-2026'!U7"] == "Đã Confirm số + Chờ brand gửi BBNT"
 
 
 def test_out_of_scope_case_keeps_planned_writes_unexecuted(conn, run):

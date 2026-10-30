@@ -245,6 +245,7 @@ export type ReconCase = {
   email_reasons: string[]
   loopmail_candidates: { id: string; subject: string; last_at: string }[] | null
   gmail_thread_id: string | null
+  brand_confirmed_at: string | null
 }
 export type ReconReview = {
   id: number
@@ -302,5 +303,7 @@ export const holdCase = (t: Tokens, id: string, reason: string): Promise<unknown
   call(t, `/api/v1/recon/cases/${id}/hold`, { method: "POST", body: JSON.stringify({ reason }) })
 export const chooseLoopmail = (t: Tokens, id: string, threadId: string): Promise<unknown> =>
   call(t, `/api/v1/recon/cases/${id}/loopmail`, { method: "POST", body: JSON.stringify({ thread_id: threadId }) })
+export const markBrandConfirmed = (t: Tokens, id: string): Promise<unknown> =>
+  call(t, `/api/v1/recon/cases/${id}/brand-confirmed`, { method: "POST" })
 export const resumeCase = (t: Tokens, id: string): Promise<unknown> =>
   call(t, `/api/v1/recon/cases/${id}/resume`, { method: "POST" })

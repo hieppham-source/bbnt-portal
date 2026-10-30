@@ -118,3 +118,17 @@ def test_brand_replies_listed_until_seen(conn, run):
     assert c.post("/api/v1/recon/replies/m1/seen", headers=KAM).status_code == 204
     assert c.post("/api/v1/recon/replies/m1/seen", headers=KAM).status_code == 409
     assert [r["id"] for r in c.get("/api/v1/recon/replies", headers=KAM).json()] == ["m3"]
+
+
+def test_brand_confirmed_only_after_acceptance_sent(conn, run):
+    go(conn, run, row(*ORG))
+    c = client()
+    cid = c.get("/api/v1/recon/cases", headers=KAM).json()[0]["id"]
+    url = f"/api/v1/recon/cases/{cid}/brand-confirmed"
+    assert c.post(url, headers=BOSS).status_code == 409                         # chưa gửi nghiệm thu
+    conn.execute("UPDATE recon_case SET state = 'ACCEPTANCE_SENT'")
+    assert c.post(url, headers=KAM).status_code == 403
+    assert c.post(url, headers=BOSS).status_code == 204
+    assert c.post(url, headers=BOSS).status_code == 409
+    assert c.get("/api/v1/recon/cases", headers=KAM).json()[0]["brand_confirmed_at"] is not None
+    assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'BRAND_CONFIRMED'")[0] == 1

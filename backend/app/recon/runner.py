@@ -51,7 +51,16 @@ from app.recon.emailer import (
     status_request_text,
 )
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key
-from app.recon.followup import FOLLOW, FollowCase, load_cases, send_approved, send_followups, sync_replies, track_stages
+from app.recon.followup import (
+    FOLLOW,
+    FollowCase,
+    load_cases,
+    send_approved,
+    send_followups,
+    status_writes,
+    sync_replies,
+    track_stages,
+)
 from app.recon.rules import BusinessCalendar, CellAction, confirm_deadline, entity_code, reminder_due
 from app.recon.sheet_writer import CellResult, CellWrite
 from app.recon.state_machine import InvalidTransition, State, Trigger, transition
@@ -78,6 +87,7 @@ class RunStats:
     emails_failed: int = 0
     email_skipped: dict[str, int] = field(default_factory=dict)   # mã lý do -> số case
     stage_moves: int = 0          # case đổi giai đoạn theo Status U (HĐ nháp / đã xuất HĐ / Done)
+    status_written: int = 0       # ô Status U bot đã ghi (tối đa "Đã done BBNT + Chờ KT xuất HĐ nháp")
     notes: list[str] = field(default_factory=list)
 
 
@@ -506,3 +516,23 @@ def run_followups(conn: psycopg.Connection, rows: Sequence[FbjtRow], done: Seque
     send_approved(conn, active, threads, brand_to, gmail, settings, deliver, guard, full, now=now, cal=cal)
     send_followups(conn, active, threads, brand_to, gmail, settings, _outbox, deliver, guard, full,
                    lambda *c: _bump(st, *c), now=now, cal=cal)
+
+
+def write_status(conn: psycopg.Connection, rows: Sequence[FbjtRow], write: Writer, letter: str, tab: str, *,
+                 now: datetime, run_id: uuid.UUID, st: RunStats) -> None:
+    """Ghi Status U theo việc bot đã làm (xem ``followup.status_writes``). Đọc lại ô trước khi ghi: người vừa đổi U
+    -> CONFLICT, không ghi. Mỗi ô 1 dòng ``audit_log``."""
+    todo = status_writes(conn, rows, tab)
+    if not todo:
+        return
+    for w, res in zip(todo, write([CellWrite(w.row.row_number, letter, w.row.status, w.target) for w in todo]),
+                      strict=True):
+        conn.execute(
+            "INSERT INTO audit_log (at, actor, action, entity, entity_id, before, after, run_id) "
+            "VALUES (%s, %s, 'SHEET_WRITE', 'fbjt_cell', %s, %s, %s, %s)",
+            (now, ACTOR, f"{letter}{w.row.row_number}", Jsonb({"value": _jsonable(res.before)}),
+             Jsonb({"value": _jsonable(res.after), "target": w.target, "status": res.status, "note": res.note,
+                    "case_id": str(w.case_id)}), run_id))
+        st.status_written += res.status == "VERIFIED"
+        st.conflicts += res.status == "CONFLICT"
+        st.failed += res.status == "FAILED"

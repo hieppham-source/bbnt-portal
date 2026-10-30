@@ -64,6 +64,7 @@ class CaseOut(BaseModel):
     email_reasons: list[str] = []
     loopmail_candidates: list[dict[str, str]] | None = None
     gmail_thread_id: str | None = None
+    brand_confirmed_at: datetime | None = None
 
 
 class ReviewOut(BaseModel):
@@ -131,11 +132,12 @@ def cases(user: CurrentUser, conn: Conn) -> list[CaseOut]:
         "SELECT c.id, c.state, c.brand_codes, c.campaign, "
         "COALESCE(array_agg(r.last_row_number ORDER BY r.last_row_number) FILTER (WHERE r.id IS NOT NULL), '{}'), "
         "c.bbnt_number, c.review_reasons, c.pic, c.hold_reason, c.updated_at, c.email_reasons, "
-        "c.loopmail_candidates, c.gmail_thread_id FROM recon_case c LEFT JOIN sheet_row r ON r.case_id = c.id "
+        "c.loopmail_candidates, c.gmail_thread_id, c.brand_confirmed_at "
+        "FROM recon_case c LEFT JOIN sheet_row r ON r.case_id = c.id "
         "GROUP BY c.id ORDER BY c.updated_at DESC LIMIT 1000").fetchall()
     return [CaseOut(id=r[0], state=r[1], brands=r[2], campaign=r[3], rows=r[4], bbnt_number=r[5], reasons=r[6],
                     pic=r[7], hold_reason=r[8], updated_at=r[9], email_reasons=r[10], loopmail_candidates=r[11],
-                    gmail_thread_id=r[12]) for r in rows]
+                    gmail_thread_id=r[12], brand_confirmed_at=r[13]) for r in rows]
 
 
 @router.get("/reviews", response_model=list[ReviewOut])
@@ -213,6 +215,23 @@ def reply_seen(message_id: str, user: CurrentUser, conn: Conn) -> None:
     if conn.execute("UPDATE email_message SET reviewed_by = %s, reviewed_at = now() WHERE gmail_message_id = %s "
                     "AND direction = 'IN' AND reviewed_at IS NULL", (user.email.lower(), message_id)).rowcount == 0:
         raise HTTPException(409, detail={"code": "REPLY_ALREADY_SEEN", "message": "Thư đã được đánh dấu xem"})
+
+
+@router.post("/cases/{case_id}/brand-confirmed", status_code=204)
+def brand_confirmed(case_id: uuid.UUID, user: CurrentUser, conn: Conn,
+                    settings: Annotated[Settings, Depends(get_settings)]) -> None:
+    """KAM xác nhận brand đã confirm số + BBNT (online) trong loopmail -> lần chạy sau bot ghi Status U
+    "Đã done BBNT + Chờ KT xuất HĐ nháp" và ngừng nhắc ký BBNT. Chỉ sau khi đã gửi email nghiệm thu."""
+    who = _approver(user, settings)
+    with conn.transaction():
+        if conn.execute("UPDATE recon_case SET brand_confirmed_by = %s, brand_confirmed_at = now(), updated_at = now() "
+                        "WHERE id = %s AND state = 'ACCEPTANCE_SENT' AND brand_confirmed_at IS NULL",
+                        (who, case_id)).rowcount == 0:
+            raise HTTPException(409, detail={"code": "CASE_STATE_CONFLICT",
+                                             "message": "Chỉ đánh dấu được case đã gửi nghiệm thu, chưa đánh dấu"})
+        conn.execute("INSERT INTO audit_log (at, actor, action, entity, entity_id, after) "
+                     "VALUES (now(), %s, 'BRAND_CONFIRMED', 'recon_case', %s, %s)",
+                     (who, str(case_id), Jsonb({"status_u": "Đã done BBNT + Chờ KT xuất HĐ nháp"})))
 
 
 @router.post("/cases/{case_id}/loopmail", status_code=204)

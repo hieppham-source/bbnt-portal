@@ -43,3 +43,4 @@ Baseline (27/10/2026, `main` @ `be77c42`): ruff OK · mypy strict OK (chạy b�
 - 30/10/2026 — Chốt Q15–Q18. Email 2: hạn = 3 ngày làm việc (lịch có ngày lễ đã duyệt trong DB). pytest 666 passed.
 - 30/10/2026 — Email 1 (G + 25): bot quét file order, còn dòng chưa có status → `STATUS_INCOMPLETE`, tự gửi Email 1 (mở loopmail), nhắc lại chờ duyệt trên dashboard; đủ status mới lập BBNT + Email 2. API `/api/v1/recon/emails` (Gửi / Bỏ). Migration `0004`. pytest 673 passed.
 - 30/10/2026 — Sau email nghiệm thu: giai đoạn theo U (HĐ nháp / đã xuất HĐ / Done), thư brand trả lời (metadata) + dashboard, nhắc 3A/3B chờ duyệt, 4A/4B tự gửi (4B có phạt, bỏ số TK). API `/replies`. Migration `0005`. pytest 682 passed.
+- 30/10/2026 — Bot ghi Status U (chỉ tiến lên, tối đa "Đã done BBNT + Chờ KT xuất HĐ nháp"): Email 1 / Email 2 thật / KAM bấm "Brand đã confirm". Migration `0006`. pytest 689 passed. Cột "Ngày cập nhật status" do script có sẵn tự điền (anh xác nhận).
