@@ -228,3 +228,40 @@ export async function generateBbnt(t: Tokens, body: BbntRequest): Promise<string
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
   return decodeURIComponent(res.headers.get("X-BBNT-Number") ?? "")
 }
+
+// ---------------------------------------------------------------- đối soát (/reconcile)
+export type ReconMe = { email: string; can_approve: boolean }
+export type ReconCase = {
+  id: string
+  state: string
+  brands: string[]
+  campaign: string
+  rows: number[]
+  bbnt_number: string | null
+  reasons: string[]
+  pic: string | null
+  hold_reason: string | null
+  updated_at: string
+}
+export type ReconReview = {
+  id: number
+  case_id: string
+  brands: string[]
+  campaign: string
+  row: number | null
+  column: "nmv" | "commission" | "gmv"
+  current_value: string | null
+  bbnt_value: string
+  created_at: string
+}
+
+export const reconMe = (t: Tokens): Promise<ReconMe> => call(t, "/api/v1/recon/me").then((r) => r.json())
+export const reconCases = (t: Tokens): Promise<ReconCase[]> => call(t, "/api/v1/recon/cases").then((r) => r.json())
+export const reconReviews = (t: Tokens): Promise<ReconReview[]> =>
+  call(t, "/api/v1/recon/reviews").then((r) => r.json())
+export const decideReview = (t: Tokens, id: number, decision: "CHANGE" | "KEEP"): Promise<unknown> =>
+  call(t, `/api/v1/recon/reviews/${id}`, { method: "POST", body: JSON.stringify({ decision }) })
+export const holdCase = (t: Tokens, id: string, reason: string): Promise<unknown> =>
+  call(t, `/api/v1/recon/cases/${id}/hold`, { method: "POST", body: JSON.stringify({ reason }) })
+export const resumeCase = (t: Tokens, id: string): Promise<unknown> =>
+  call(t, `/api/v1/recon/cases/${id}/resume`, { method: "POST" })

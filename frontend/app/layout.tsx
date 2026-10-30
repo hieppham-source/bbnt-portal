@@ -26,6 +26,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <nav>
                 <Link href="/">Tạo BBNT</Link>
                 <Link href="/master">Kiểm tra master</Link>
+                <Link href="/reconcile">Đối soát</Link>
               </nav>
               <form
                 action={async () => {
