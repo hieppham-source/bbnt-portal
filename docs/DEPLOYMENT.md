@@ -47,11 +47,11 @@ khi chọn `report=true`. Lỗi bất ngờ chỉ in tên lỗi (ẩn chi tiết
 
 ## Migration
 
-Áp dụng tay theo thứ tự (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`, rồi `0002_recon_idempotency.up.sql`. CI job `migrations` chạy cả hai. Rollback: xem `OPERATIONS_RUNBOOK.md`.
+Áp dụng tay theo thứ tự (không tự chạy migration production): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.up.sql`, rồi `0002_recon_idempotency.up.sql`, rồi `0003_recon_email.up.sql`. CI job `migrations` chạy cả ba. Rollback: xem `OPERATIONS_RUNBOOK.md`.
 
 ## Bật ghi I/K/M (thứ tự bắt buộc)
 
-1. Neon: tạo DB, chạy `0001` rồi `0002`, lưu `DATABASE_URL` vào GitHub Secrets.
+1. Neon: tạo DB, chạy `0001`, `0002`, `0003`, lưu `DATABASE_URL` vào GitHub Secrets.
 2. Chạy `recon-run-once` với `RECON_SHEET_WRITE` chưa đặt (= off): chỉ lưu trạng thái, không ghi Sheet.
 3. Tạo **bản sao FB.JT**, share Editor cho hộp thư bot. Đặt tạm `RECON_FBJT_ID` = ID bản sao, `RECON_SHEET_WRITE=on`,
    `RECON_SHEET_WRITE_ID` = ID bản sao → chạy, kiểm tra ô I/K/M trên bản sao + bảng `sheet_write`, `audit_log`.

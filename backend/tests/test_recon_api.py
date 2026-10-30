@@ -64,3 +64,20 @@ def test_hold_and_resume_case(conn, run):
 
 def test_no_database_configured_returns_503():
     assert client(db_url=None).get("/api/v1/recon/cases", headers=KAM).status_code == 503
+
+
+def test_choose_loopmail_only_from_bot_candidates(conn, run):
+    from psycopg.types.json import Jsonb
+    go(conn, run, row(*ORG))
+    conn.execute("UPDATE recon_case SET loopmail_candidates = %s, email_reasons = '{LOOPMAIL_NOT_UNIQUE}'",
+                 (Jsonb([{"id": "t1", "subject": "S", "last_at": "1"}, {"id": "t2", "subject": "S", "last_at": "2"}]),))
+    c = client()
+    [case] = c.get("/api/v1/recon/cases", headers=KAM).json()
+    assert case["email_reasons"] == ["LOOPMAIL_NOT_UNIQUE"] and len(case["loopmail_candidates"]) == 2
+    url = f"/api/v1/recon/cases/{case['id']}/loopmail"
+    assert c.post(url, json={"thread_id": "t1"}, headers=KAM).status_code == 403
+    assert c.post(url, json={"thread_id": "t9999"}, headers=BOSS).status_code == 409
+    assert c.post(url, json={"thread_id": "t2"}, headers=BOSS).status_code == 204
+    assert one(conn, "SELECT gmail_thread_id, loopmail_candidates FROM recon_case") == ("t2", None)
+    assert c.post(url, json={"thread_id": "t1"}, headers=BOSS).status_code == 409          # đã chọn rồi
+    assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'LOOPMAIL_CHOSEN'")[0] == 1

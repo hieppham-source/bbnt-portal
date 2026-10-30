@@ -114,6 +114,18 @@ def parse_brand_op(values: Sequence[Sequence[Any]]) -> dict[str, str]:
             for r in values[h + 1:] if _text(_get(r, col["brand"]))}
 
 
+def parse_brand_emails(values: Sequence[Sequence[Any]]) -> dict[str, str]:
+    """``DATA BRAND``: brand (chuẩn hoá) -> ô ``EMAIL BRAND`` (có thể nhiều địa chỉ). Brand trùng -> ghép lại."""
+    h, col = _header_index(values, ["brand", "email brand"])
+    out: dict[str, str] = {}
+    for r in values[h + 1:]:
+        b, e = _text(_get(r, col["brand"])), str(_get(r, col["email brand"]) or "").strip()
+        if b and e:
+            k = brand_key(b)
+            out[k] = f"{out[k]},{e}" if k in out else e
+    return out
+
+
 # ----------------------------------------------------------------------------------------- NON OP {YY} chip links
 def chip_url(cell: Mapping[str, Any]) -> str:
     """URL của smart chip (``chipRuns[].chip.richLinkProperties.uri``), hoặc hyperlink thường; không có -> chữ

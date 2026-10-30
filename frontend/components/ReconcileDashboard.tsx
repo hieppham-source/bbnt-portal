@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import {
   type ApiError,
+  chooseLoopmail,
   decideReview,
   holdCase,
   type ReconCase,
@@ -163,7 +164,7 @@ export default function ReconcileDashboard() {
           <input placeholder="Tìm brand, campaign, PIC, số BBNT" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <div className="chips">
-          {["NEEDS_REVIEW", "WAITING", "BBNT_DRAFTED", "FIGURES_WRITTEN", "ON_HOLD", "ALL"].map((s) => (
+          {["NEEDS_REVIEW", "WAITING", "BBNT_DRAFTED", "FIGURES_WRITTEN", "ACCEPTANCE_SENT", "ON_HOLD", "ALL"].map((s) => (
             <button key={s} className={state === s ? "primary" : ""} onClick={() => setState(s)}>
               {s === "ALL" ? `Tất cả (${cases.length})` : `${STATE_LABEL[s]} (${counts[s] ?? 0})`}
             </button>
@@ -192,6 +193,24 @@ export default function ReconcileDashboard() {
                 <td>
                   {c.state === "ON_HOLD" ? c.hold_reason : c.reasons.join(", ")}
                   {c.bbnt_number && <div className="muted">{c.bbnt_number}</div>}
+                  {c.email_reasons.length > 0 && c.state !== "ACCEPTANCE_SENT" && (
+                    <div className="muted">Email chưa gửi: {c.email_reasons.join(", ")}</div>
+                  )}
+                  {c.loopmail_candidates && (
+                    <div>
+                      Chọn loopmail:{" "}
+                      {c.loopmail_candidates.map((t) => (
+                        <button
+                          key={t.id}
+                          disabled={!canApprove || busy}
+                          title={t.last_at ? new Date(Number(t.last_at)).toLocaleString("vi-VN") : undefined}
+                          onClick={() => act(() => chooseLoopmail(token, c.id, t.id))}
+                        >
+                          {t.subject} · {t.id}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td>
                   {canApprove && c.state === "ON_HOLD" && (
