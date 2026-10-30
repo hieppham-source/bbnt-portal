@@ -168,11 +168,6 @@ def test_out_of_scope_case_keeps_planned_writes_unexecuted(conn, run):
 
 
 # --------------------------------------------------------------------------------------------- email nghiệm thu
-TEMPLATE = ("INSERT INTO email_template (code, version, status, subject, body_html, approved_by, approved_at) VALUES "
-            "('ACCEPTANCE', 1, 'APPROVED', 's', '<p>Gửi {brands}: BBNT {bbnt_number}, hoa hồng {commission}</p>', "
-            "'hiep.pham@hannaholala.com', now())")
-
-
 def _email(conn, plans, run_id, st, gmail, env, mail=None):
     from app.recon.emailer import EmailSettings
     from app.recon.runner import send_acceptance_emails
@@ -233,19 +228,18 @@ def test_email_skip_reason_and_limit(conn, run):
     assert st.email_skipped == {"MAX_PER_RUN": 1}
 
 
-def test_live_needs_figures_written_and_approved_template(conn, run):
+def test_live_needs_figures_written_and_signer(conn, run):
     from .test_recon_email import LIVE, FakeGmail
     gmail = FakeGmail()
     plans, st, run_id = go(conn, run, row(*ORG))
-    _email(conn, plans, run_id, st, gmail, LIVE)
+    _email(conn, plans, run_id, st, gmail, {**LIVE, "RECON_EMAIL_SIGNER": ""})
     assert gmail.sent == [] and one(conn, "SELECT email_reasons FROM recon_case") == (
-        ["FIGURES_MISMATCH_FBJT", "TEMPLATE_NOT_CONFIGURED"],)
+        ["FIGURES_MISMATCH_FBJT", "SIGNER_NOT_SET"],)
     assert one(conn, "SELECT count(*) FROM email_outbox")[0] == 0
 
 
 def test_live_replies_into_loopmail_once_and_moves_case(conn, run):
     from .test_recon_email import LIVE, FakeGmail
-    conn.execute(TEMPLATE)
     plans, st, run_id = _figures_written(conn, run)
     gmail = FakeGmail()
     _email(conn, plans, run_id, st, gmail, LIVE)
@@ -253,7 +247,7 @@ def test_live_replies_into_loopmail_once_and_moves_case(conn, run):
     assert thread == "t1" and msg["To"] == "kt@brand.vn" and "fb@hannaholala.com" in msg["Cc"]
     assert msg["In-Reply-To"] == "<b@x>" and msg["References"] == "<a@x> <b@x>"
     assert msg["Subject"] == "Re: BBNT BDAY T5"
-    assert "BBNT 10.26/BBNT-X, hoa hồng 216.000 đ" in msg.get_body(("html",)).get_content()
+    assert "<b>216.000</b>" in msg.get_body(("html",)).get_content()
     assert one(conn, "SELECT state, email_reasons FROM recon_case") == ("ACCEPTANCE_SENT", [])
     assert one(conn, "SELECT direction, gmail_thread_id FROM email_message") == ("OUT", "t1")
     plans, st, run_id = go(conn, run, row(*ORG))
@@ -265,7 +259,6 @@ def test_live_ambiguous_loopmail_waits_for_kam_then_sends(conn, run):
     from app.recon.emailer import Thread
 
     from .test_recon_email import LIVE, FakeGmail
-    conn.execute(TEMPLATE)
     plans, st, run_id = _figures_written(conn, run)
     gmail = FakeGmail(extra=[Thread("t2", "BBNT BDAY T5", ["<c@x>"], frozenset({"kt@brand.vn"}))])
     _email(conn, plans, run_id, st, gmail, LIVE)
@@ -281,7 +274,6 @@ def test_live_outside_send_window_waits(conn, run):
     from app.recon.runner import send_acceptance_emails
 
     from .test_recon_email import LIVE, MAIL, FakeGmail
-    conn.execute(TEMPLATE)
     plans, st, run_id = _figures_written(conn, run)
     gmail = FakeGmail()
     send_acceptance_emails(conn, plans, lambda p, at: MAIL, gmail, EmailSettings.from_env(LIVE),

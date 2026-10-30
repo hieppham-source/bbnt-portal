@@ -32,12 +32,11 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô trước khi ghi).
 
 ## Email nghiệm thu
-- Variables: `RECON_EMAIL_MODE` = `off` (mặc định) | `test` | `live`; `RECON_EMAIL_TEST_TO` (test, 1 địa chỉ @hannaholala.com); `RECON_EMAIL_MAX` (mặc định 5, tối đa 50 thư/lần chạy).
+- Variables: `RECON_EMAIL_MODE` = `off` (mặc định) | `test` | `live`; `RECON_EMAIL_TEST_TO` (test, 1 địa chỉ @hannaholala.com); `RECON_EMAIL_SIGNER` (tên ký cuối thư `{{NGUOI_GUI}}`, bắt buộc với live); `RECON_EMAIL_MAX` (mặc định 5, tối đa 50 thư/lần chạy).
+- Nội dung: **EMAIL 2** trong Google Doc "Mẫu email nghiệm thu OM (Bot)" (bảng confirm số theo pháp nhân, deadline = ngày gửi + 3 ngày, đính kèm `BBNT_<BRAND>_<CAMP>_<MM-YY>.docx`). Mẫu nằm trong code `app/recon/emailer.py`; sửa mẫu = sửa code qua PR (bảng `email_template` ghi nguồn + người duyệt).
 - **test**: mỗi case BBNT_DRAFTED / FIGURES_WRITTEN nhận đúng 1 thư `[TEST] ...` kèm BBNT .docx, chỉ tới `RECON_EMAIL_TEST_TO`. Đầu thư ghi kết quả Audit Gate, loopmail tìm được, To/CC thật. Không đổi trạng thái case.
-- **live**: chỉ khi Audit Gate đạt — case FIGURES_WRITTEN, có EMAIL BRAND, TITLE MAIL tìm được **đúng 1** loopmail (tiêu đề bỏ Re:/Fw: = TITLE MAIL và thread có email brand), có mẫu `ACCEPTANCE` APPROVED, T2–T6 08:00–18:00 giờ VN. Reply vào loopmail (In-Reply-To/References), To brand, CC nội bộ. Case → ACCEPTANCE_SENT; bot không gửi lại.
+- **live**: chỉ khi Audit Gate đạt — case FIGURES_WRITTEN, có EMAIL BRAND, TITLE MAIL tìm được **đúng 1** loopmail (tiêu đề bỏ Re:/Fw: = TITLE MAIL và thread có email brand), có `RECON_EMAIL_SIGNER`, T2–T6 08:00–18:00 giờ VN. Reply vào loopmail (In-Reply-To/References), To brand, CC nội bộ. Case → ACCEPTANCE_SENT; bot không gửi lại.
 - Lý do chưa gửi hiện ở dashboard ("Email chưa gửi: ..."). Nhiều thread khớp → dashboard hiện nút "Chọn loopmail".
-- Duyệt mẫu thư thật (biến: `{brands}` `{group}` `{campaign}` `{bbnt_number}` `{contract_no}` `{nmv}` `{gmv}` `{commission}`):
-  `INSERT INTO email_template (code, version, status, subject, body_html, approved_by, approved_at) VALUES ('ACCEPTANCE', 1, 'APPROVED', '(reply loopmail)', '<p>...</p>', '<email người duyệt>', now());` — sửa mẫu = thêm `version` mới.
 - Gửi lại 1 case (thư FAILED hoặc muốn thử lại thư test): `DELETE FROM email_outbox WHERE kind IN ('ACCEPTANCE_TEST', 'ACCEPTANCE') AND status <> 'SENT' AND case_id = '<id>';` rồi chạy lại.
 - Xem: `SELECT o.kind, o.subject, o.status, o.last_error, c.bbnt_number FROM email_outbox o JOIN recon_case c ON c.id = o.case_id ORDER BY o.created_at DESC;`
 

@@ -25,3 +25,14 @@ Chỉ ghi điều **chưa chốt**. Quyết định đã chốt nằm ở `ARCHI
 | — | Camp chưa có cột G | Chốt 28/10: chỉ xét campaign từ 08/2026; trước đó bỏ qua (`BEFORE_SCOPE`) |
 | — | Dòng đã nghiệm thu tay / gộp line | Chốt 29/10: chỉ lập BBNT khi U chưa qua bước BBNT; "GỘP LINE" → chờ duyệt |
 | Q14 | Chốt 30/10: giữ so sánh cột M với GMV của BBNT; lệch → chờ duyệt Đổi/Giữ | — |
+
+## Mẫu email (30/10/2026) — Google Doc "Mẫu email nghiệm thu OM (Bot)"
+
+EMAIL 2 (confirm số + BBNT) đã dùng làm thư nghiệm thu của bot — không mâu thuẫn. Email 1, 3, 4 mâu thuẫn với quyết định cũ, **chưa làm**, chờ chốt:
+
+| # | Mẫu ghi | Đã chốt trước (ARCHITECTURE) | Đề xuất |
+|---|---|---|---|
+| Q15 | Email 1: bot **tạo luồng mới** (nhắc brand điền status link order); Email 2–4 reply luồng đó | 15.4: bot **không** tạo thread, tìm loopmail theo TITLE MAIL | Theo mẫu cho case mới từ tháng chạy bot; case đã có loopmail tay thì vẫn tìm theo TITLE MAIL |
+| Q16 | Deadline = ngày gửi + **3 ngày** (lịch) | 11.3: **3 ngày làm việc** | Theo mẫu (3 ngày lịch) — EMAIL 2 đang dùng cách này |
+| Q17 | Hạn thanh toán = ngày HĐ + **số ngày theo HĐ (mặc định 7)**; 4B không có phạt | 13.4: **10 ngày làm việc** + phạt ước tính 0,05%/ngày trong thư | Theo mẫu: đọc `DATA CONTRACT.SỐ NGÀY THANH TOÁN` (trống = 7), bỏ phạt khỏi thư |
+| Q18 | 3B đính kèm hóa đơn nháp PDF; Email 4 cần `{{THONG_TIN_TK}}` | Chưa có nguồn file HĐ nháp / thông tin TK | Kế toán gửi HĐ nháp (bot chỉ nhắc); TK nhận tiền lấy từ cấu hình theo pháp nhân |
