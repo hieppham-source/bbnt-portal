@@ -32,7 +32,7 @@ from app.config import DEFAULT_TEMPLATES_DIR
 from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
-from app.recon.emailer import BbntMail, camp_parts, split_addresses
+from app.recon.emailer import BbntMail, StatusMail, camp_parts, split_addresses
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key, parse_rows, row_key
 from app.recon.rules import SCOPE_FROM, CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
@@ -95,6 +95,8 @@ class CasePlan:
     warnings: dict[str, int] = field(default_factory=dict)
     #: Đầu vào generator (để render .docx đính kèm email sau khi lưu DB).
     job: CaseBbnt | None = None
+    #: Ngày đơn đầu / cuối trong file order (Email 1: {{TU_NGAY}}, {{DEN_NGAY}}).
+    order_period: tuple[date, date] | None = None
 
 
 def _commission_k(r: BbntResult) -> Decimal:
@@ -256,6 +258,13 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
         if out.result is None:
             plan.reasons.extend(out.reasons)
             continue
+        dates = [ln.order_date.date() for ln in out.result.lines if ln.order_date]
+        plan.order_period = (min(dates), max(dates)) if dates else None
+        blank = sum(1 for ln in out.result.lines if not ln.raw_status.strip())
+        if blank:      # brand chưa điền đủ status -> Email 1 / nhắc, chưa lập BBNT (anh Hiệp chốt 30/10/2026)
+            plan.action, plan.reasons = Action.WAIT, ["STATUS_INCOMPLETE"]
+            plan.hints.append(f"{blank} dòng order chưa có status")
+            continue
         plan.bbnt_number = str(out.result.number)
         for w in out.result.warnings:
             if w.code.value in WARNING_CODES:
@@ -280,15 +289,9 @@ Render = Callable[[CasePlan, datetime], "BbntResult | None"]
 def mail_for(p: CasePlan, issued_at: datetime, rows: Mapping[int, FbjtRow], brand_emails: Mapping[str, str],
              render: Render) -> BbntMail | str:
     """Dữ liệu thư BBNT của 1 case DRAFT, hoặc mã lý do không gửi (thiếu email brand, render lỗi…)."""
-    to: list[str] = []
-    for b in p.brands:
-        text = brand_emails.get(brand_key(b), "")
-        if not text.strip():
-            return "NO_BRAND_EMAIL"
-        try:
-            to += split_addresses(text)
-        except ValueError:
-            return "BRAND_EMAIL_INVALID"
+    to = _brand_to(p.brands, brand_emails)
+    if isinstance(to, str):
+        return to
     r = render(p, issued_at)
     if r is None or r.content is None:
         return "RENDER_FAILED"
@@ -300,7 +303,30 @@ def mail_for(p: CasePlan, issued_at: datetime, rows: Mapping[int, FbjtRow], bran
     return BbntMail(first.group, p.brands, r.entity.code, first.title_mail, p.campaign, str(r.number),
                     r.contract.contract_no, r.gmv_vnd, r.nmv.cancellation_rate, r.nmv_vnd, c.commission_rate,
                     c.revenue, c.vat_amount, c.tax_deduction_amount, c.collected_on_behalf, c.consulting_fee,
-                    c.total_payable, c.tax_rate, list(dict.fromkeys(to)), filename, r.content)
+                    c.total_payable, c.tax_rate, to, filename, r.content)
+
+
+def _brand_to(brands: Sequence[str], brand_emails: Mapping[str, str]) -> list[str] | str:
+    to: list[str] = []
+    for b in brands:
+        text = brand_emails.get(brand_key(b), "")
+        if not text.strip():
+            return "NO_BRAND_EMAIL"
+        try:
+            to += split_addresses(text)
+        except ValueError:
+            return "BRAND_EMAIL_INVALID"
+    return list(dict.fromkeys(to))
+
+
+def status_mail_for(p: CasePlan, rows: Mapping[int, FbjtRow], brand_emails: Mapping[str, str]) -> StatusMail | str:
+    """Dữ liệu Email 1 / nhắc điền status, hoặc mã lý do không gửi."""
+    to = _brand_to(p.brands, brand_emails)
+    if isinstance(to, str):
+        return to
+    first = rows[p.rows[0]]
+    return StatusMail(first.group, p.brands, p.job.entity if p.job else entity_code(first.entity_b) or "",
+                      first.title_mail, p.campaign, p.url or "", p.order_period, to)
 
 
 # --------------------------------------------------------------------------------------------------------- CLI
@@ -408,6 +434,7 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
         LOCK_KEY,
         persist,
         send_acceptance_emails,
+        send_status_requests,
         stored_issued_at,
         write_back,
     )
@@ -436,6 +463,8 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
             if write_ok:
                 write_back(conn, lambda ws: write_cells(s, fbjt_id, tab, ws),
                            {k: outcome.columns.letter(k) for k in WRITABLE}, now=now, run_id=run_id, st=st)
+            send_status_requests(conn, plans, lambda p: status_mail_for(p, by_row, live.brand_emails),
+                                 GmailApi(s), mail, now=now, run_id=run_id, st=st)
             send_acceptance_emails(conn, plans,
                                    lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
                                    GmailApi(s), mail, now=now, run_id=run_id, st=st)

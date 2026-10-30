@@ -45,9 +45,10 @@ class FakeGmail:
     def __init__(self, extra=(), fail=False):
         self.threads = {t.id: t for t in (LOOP, Thread("x9", "Khác", [], frozenset({"kt@brand.vn"})), *extra)}
         self.fail, self.sent = fail, []
+        self.threads["new"] = Thread("new", "ORGANICA x EZS - FB - BDAY 05/26", ["<new@x>"], frozenset({"kt@brand.vn"}))
 
     def search(self, title):
-        return list(self.threads)
+        return [k for k in self.threads if k != "new"]
 
     def thread(self, thread_id):
         return self.threads[thread_id]

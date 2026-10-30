@@ -10,6 +10,7 @@ Mỗi lần bot ghi I/K/M có dòng `audit_log` (`before`/`after`, số dòng, c
 ## Migration
 - Trước khi chạy: backup (`pg_dump "$DATABASE_URL" > backup.sql`, Neon cũng có point-in-time restore).
 - Up lỗi giữa chừng: file chạy trong 1 transaction → không để lại bảng dở (có test).
+- Rollback 0004 (chạy trước 0003): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0004_recon_status_emails.down.sql`.
 - Rollback 0003 (chạy trước 0002): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0003_recon_email.down.sql` — xoá thư test trong `email_outbox`, giữ `audit_log`.
 - Rollback 0002 (chạy trước 0001): `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0002_recon_idempotency.down.sql` — mất nhật ký `sheet_write`, giữ case.
 - Rollback 0001: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/migrations/0001_recon_init.down.sql` — **xoá toàn bộ dữ liệu workflow**, chỉ làm sau khi backup.
@@ -37,7 +38,8 @@ CHANGE → lần chạy `recon-run-once` sau sẽ ghi (vẫn đọc lại ô tr�
 - **test**: mỗi case BBNT_DRAFTED / FIGURES_WRITTEN nhận đúng 1 thư `[TEST] ...` kèm BBNT .docx, chỉ tới `RECON_EMAIL_TEST_TO`. Đầu thư ghi kết quả Audit Gate, loopmail tìm được, To/CC thật. Không đổi trạng thái case.
 - **live**: chỉ khi Audit Gate đạt — case FIGURES_WRITTEN, có EMAIL BRAND, TITLE MAIL tìm được **đúng 1** loopmail (tiêu đề bỏ Re:/Fw: = TITLE MAIL và thread có email brand), có `RECON_EMAIL_SIGNER`, T2–T6 08:00–18:00 giờ VN. Reply vào loopmail (In-Reply-To/References), To brand, CC nội bộ. Case → ACCEPTANCE_SENT; bot không gửi lại.
 - Lý do chưa gửi hiện ở dashboard ("Email chưa gửi: ..."). Nhiều thread khớp → dashboard hiện nút "Chọn loopmail".
-- Gửi lại 1 case (thư FAILED hoặc muốn thử lại thư test): `DELETE FROM email_outbox WHERE kind IN ('ACCEPTANCE_TEST', 'ACCEPTANCE') AND status <> 'SENT' AND case_id = '<id>';` rồi chạy lại.
+- **Email 1** (G + 25, file order còn dòng chưa có status → case `STATUS_INCOMPLETE`): tự gửi 1 lần, mở loopmail mới nếu chưa có. Quá hạn → thư nhắc hiện ở dashboard mục **Thư chờ duyệt** (Gửi / Bỏ); Gửi → lần chạy sau gửi vào loopmail. Brand điền đủ → bot lập BBNT + Email 2, thư nhắc chưa gửi tự huỷ.
+- Gửi lại 1 case (thư FAILED hoặc muốn thử lại thư test): `DELETE FROM email_outbox WHERE kind IN ('ACCEPTANCE_TEST', 'ACCEPTANCE', 'STATUS_REQUEST', 'STATUS_REQUEST_TEST') AND status NOT IN ('SENT', 'PENDING_REVIEW', 'QUEUED') AND case_id = '<id>';` rồi chạy lại.
 - Xem: `SELECT o.kind, o.subject, o.status, o.last_error, c.bbnt_number FROM email_outbox o JOIN recon_case c ON c.id = o.case_id ORDER BY o.created_at DESC;`
 
 ## Lịch chạy

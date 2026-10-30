@@ -81,3 +81,26 @@ def test_choose_loopmail_only_from_bot_candidates(conn, run):
     assert one(conn, "SELECT gmail_thread_id, loopmail_candidates FROM recon_case") == ("t2", None)
     assert c.post(url, json={"thread_id": "t1"}, headers=BOSS).status_code == 409          # đã chọn rồi
     assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'LOOPMAIL_CHOSEN'")[0] == 1
+
+
+def test_pending_email_approve_or_skip_by_approver_only(conn, run):
+    import uuid
+    go(conn, run, row(*ORG))
+    cid = one(conn, "SELECT id FROM recon_case")[0]
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    for n, i in enumerate(ids, 1):
+        conn.execute("INSERT INTO email_outbox (id, case_id, kind, cycle_no, idempotency_key, template_code, "
+                     "template_version, to_addrs, subject, body_html, status) VALUES (%s, %s, 'STATUS_REMINDER', %s, "
+                     "%s, 'STATUS_REMINDER', 1, '{kt@brand.vn}', 'Re: x', 'nhắc', 'PENDING_REVIEW')",
+                     (i, cid, n, f"k{n}"))
+    c = client()
+    got = c.get("/api/v1/recon/emails", headers=KAM).json()
+    assert [(e["kind"], e["cycle_no"], e["to"]) for e in got] == [("STATUS_REMINDER", 1, ["kt@brand.vn"]),
+                                                                  ("STATUS_REMINDER", 2, ["kt@brand.vn"])]
+    assert c.post(f"/api/v1/recon/emails/{ids[0]}", json={"decision": "SEND"}, headers=KAM).status_code == 403
+    assert c.post(f"/api/v1/recon/emails/{ids[0]}", json={"decision": "CHANGE"}, headers=BOSS).status_code == 422
+    assert c.post(f"/api/v1/recon/emails/{ids[0]}", json={"decision": "SEND"}, headers=BOSS).status_code == 204
+    assert c.post(f"/api/v1/recon/emails/{ids[1]}", json={"decision": "SKIP"}, headers=BOSS).status_code == 204
+    assert c.post(f"/api/v1/recon/emails/{ids[1]}", json={"decision": "SEND"}, headers=BOSS).status_code == 409
+    assert [r[0] for r in conn.execute("SELECT status FROM email_outbox ORDER BY cycle_no")] == ["QUEUED", "CANCELLED"]
+    assert one(conn, "SELECT count(*) FROM audit_log WHERE action = 'EMAIL_REVIEW'")[0] == 2

@@ -258,6 +258,24 @@ export type ReconReview = {
   created_at: string
 }
 
+export type ReconEmail = {
+  id: string
+  case_id: string
+  brands: string[]
+  campaign: string
+  kind: string
+  cycle_no: number
+  to: string[]
+  cc: string[]
+  subject: string
+  body: string
+  created_at: string
+}
+
+export const reconEmails = (t: Tokens): Promise<ReconEmail[]> =>
+  call(t, "/api/v1/recon/emails").then((r) => r.json())
+export const decideEmail = (t: Tokens, id: string, decision: "SEND" | "SKIP"): Promise<unknown> =>
+  call(t, `/api/v1/recon/emails/${id}`, { method: "POST", body: JSON.stringify({ decision }) })
 export const reconMe = (t: Tokens): Promise<ReconMe> => call(t, "/api/v1/recon/me").then((r) => r.json())
 export const reconCases = (t: Tokens): Promise<ReconCase[]> => call(t, "/api/v1/recon/cases").then((r) => r.json())
 export const reconReviews = (t: Tokens): Promise<ReconReview[]> =>

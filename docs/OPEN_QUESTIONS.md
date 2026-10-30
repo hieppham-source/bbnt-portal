@@ -32,7 +32,7 @@ EMAIL 2 (confirm số + BBNT) là thư nghiệm thu của bot. Mâu thuẫn gi�
 
 | # | Mẫu ghi | Trước đó (ARCHITECTURE) | Chốt |
 |---|---|---|---|
-| Q15 | Email 1: bot **tạo luồng mới** (nhắc brand điền status link order); Email 2–4 reply luồng đó | 15.4: bot không tạo thread | **Theo mẫu**: case mới bot tạo luồng bằng Email 1; case đã có luồng gửi tay vẫn tìm theo TITLE MAIL. Chưa làm — cần chốt thời điểm gửi Email 1 |
+| Q15 | Email 1: bot **tạo luồng mới** (nhắc brand điền status link order); Email 2–4 reply luồng đó | 15.4: bot không tạo thread | **Theo mẫu**: case mới bot tạo luồng bằng Email 1; case đã có luồng gửi tay vẫn tìm theo TITLE MAIL. Email 1 gửi tại **G + 25**, **tự gửi**; nhắc lại **cần duyệt**. Bot quét file order mỗi lần chạy: **chỉ khi mọi dòng đã có status** mới lập BBNT, ghi I/K/M, gửi Email 2 |
 | Q16 | Deadline = ngày gửi + 3 ngày (lịch) | 11.3: 3 ngày làm việc | **3 ngày làm việc** (bỏ T7, CN, ngày lễ đã duyệt). Email 2 đã sửa |
 | Q17 | Hạn thanh toán = ngày HĐ + số ngày theo HĐ (mặc định 7); 4B không ghi phạt | 13.4: 10 ngày làm việc + phạt ước tính 0,05%/ngày | **Giữ cũ**: 10 ngày làm việc, thư nhắc có dòng phạt ước tính |
-| Q18 | 3B đính kèm HĐ nháp PDF; Email 4 cần `{{THONG_TIN_TK}}` | Chưa có nguồn | **Kế toán tự gửi HĐ nháp**, bot chỉ gửi bản nhắc lại 3B; TK nhận tiền cấu hình sẵn theo pháp nhân (EZS / SASSY) |
+| Q18 | 3B đính kèm HĐ nháp PDF; Email 4 cần `{{THONG_TIN_TK}}` | Chưa có nguồn | **Kế toán tự gửi HĐ nháp**, bot chỉ gửi bản nhắc lại 3B. Email 4 **bỏ dòng thông tin chuyển khoản** |
