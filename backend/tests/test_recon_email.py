@@ -164,3 +164,11 @@ def test_send_window_is_weekday_office_hours_vn():
     assert in_send_window(datetime(2026, 10, 28, 2, 0, tzinfo=UTC))             # T4 09:00 VN
     assert not in_send_window(datetime(2026, 10, 28, 12, 0, tzinfo=UTC))        # T4 19:00 VN
     assert not in_send_window(datetime(2026, 10, 31, 3, 0, tzinfo=UTC))         # T7
+
+
+def test_status_mails_tell_brand_which_column_to_fill() -> None:
+    from app.recon.emailer import STATUS_COLUMN, StatusMail, status_reminder_text, status_request_text
+
+    m = StatusMail("SVR", ["SVR"], "EZS", "", "SVR - 09/2026", "https://link", None, ["kt@brand.vn"])
+    for text in (status_request_text(m, "05/11/2026", "Hiệp"), status_reminder_text(m, "05/11/2026", "Hiệp")):
+        assert f'cột "{STATUS_COLUMN}"' in text and "Mã vận đơn" in text

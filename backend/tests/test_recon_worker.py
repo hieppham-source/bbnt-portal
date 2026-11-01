@@ -322,4 +322,4 @@ def test_blank_order_status_waits_for_brand_before_bbnt(run):
     [p] = run(row(*ORG), orders=BLANK_STATUS)
     assert (p.action, p.reasons, p.bbnt_number, p.cells) == (Action.WAIT, ["STATUS_INCOMPLETE"], None, [])
     assert p.job is not None and p.order_period == (date(2026, 5, 3), date(2026, 6, 2))   # mọi dòng của link (như BBNT)
-    assert p.hints == ["1 dòng order chưa có status"]
+    assert p.hints == ["1 dòng order chưa có status ở cột 'Tình trạng lên đơn'"]

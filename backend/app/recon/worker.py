@@ -32,7 +32,7 @@ from app.config import DEFAULT_TEMPLATES_DIR
 from app.core.calculation import normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
-from app.recon.emailer import BbntMail, StatusMail, camp_parts, split_addresses
+from app.recon.emailer import STATUS_COLUMN, BbntMail, StatusMail, camp_parts, split_addresses
 from app.recon.fbjt import FbjtRow, brand_key, campaign_key, parse_rows, row_key
 from app.recon.rules import SCOPE_FROM, CellAction, acceptance_send_date, allocate_total, entity_code, plan_cell
 from app.services.generator import BbntResult, OrderOpener
@@ -263,7 +263,7 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
         blank = sum(1 for ln in out.result.lines if not ln.raw_status.strip())
         if blank:      # brand chưa điền đủ status -> Email 1 / nhắc, chưa lập BBNT (anh Hiệp chốt 30/10/2026)
             plan.action, plan.reasons = Action.WAIT, ["STATUS_INCOMPLETE"]
-            plan.hints.append(f"{blank} dòng order chưa có status")
+            plan.hints.append(f"{blank} dòng order chưa có status ở cột '{STATUS_COLUMN}'")
             continue
         plan.bbnt_number = str(out.result.number)
         for w in out.result.warnings:

@@ -343,6 +343,13 @@ def _camp(campaign: str) -> str:
     return f"{name} {month}".strip()
 
 
+#: Cột status trong file link order chuẩn của OM (header "BRAND INPUT / Tình trạng lên đơn").
+# shortcut: tên cột cố định theo mẫu link order OM; brand có MAPPING cột status khác thì cần truyền tên cột thật.
+STATUS_COLUMN = "Tình trạng lên đơn"
+STATUS_COLUMN_NOTE = (f'Lưu ý: anh/chị điền status vào đúng cột "{STATUS_COLUMN}" (BRAND INPUT). Hệ thống chỉ đọc cột '
+                      "này, status ghi ở cột khác (Mã vận đơn, Note...) sẽ bị tính là đơn chưa có status.")
+
+
 def status_request_text(m: StatusMail, due: str, signer: str) -> str:
     """EMAIL 1 — nhắc điền status vào link order (mail mới, tạo loopmail)."""
     when = f" (từ {m.period[0]:%d/%m/%Y} đến {m.period[1]:%d/%m/%Y})" if m.period else ""
@@ -351,7 +358,7 @@ def status_request_text(m: StatusMail, due: str, signer: str) -> str:
         f"Hannah Olala xin gửi anh/chị danh sách đơn hàng của campaign {_camp(m.campaign)}{when} để phục vụ đối soát "
         "và nghiệm thu.", "", f"Link order: {m.link}", "",
         "Nhờ anh/chị cập nhật status giao hàng cho từng đơn (Giao thành công / Hoàn / Hủy) vào file trên trước ngày "
-        f"{due}.",
+        f"{due}.", STATUS_COLUMN_NOTE,
         "Sau khi brand cập nhật xong, Hannah sẽ tổng hợp số liệu và gửi bảng confirm số cùng biên bản nghiệm thu trong "
         "luồng mail này.",
         "Nếu có đơn chưa rõ trạng thái hoặc cần hỗ trợ, anh/chị phản hồi ngay trong mail này giúp Hannah nhé.", "",
@@ -363,7 +370,8 @@ def status_reminder_text(m: StatusMail, due: str, signer: str) -> str:
     return "\n".join([
         f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
         f"Hannah xin nhắc lại: file order campaign {_camp(m.campaign)} hiện vẫn chưa được cập nhật đầy đủ status "
-        f"({m.link}). Anh/chị vui lòng hoàn tất trước ngày {due} để hai bên kịp chốt số nghiệm thu.", "",
+        f"({m.link}). Anh/chị vui lòng hoàn tất trước ngày {due} để hai bên kịp chốt số nghiệm thu.",
+        STATUS_COLUMN_NOTE, "",
         "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)"])
 
 
