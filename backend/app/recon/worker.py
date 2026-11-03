@@ -256,6 +256,8 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
         out = make_bbnt(templates, master, plan.job, open_order(url), issued_at=(issued_at or {}).get(sid, now),
                         render=False)
         if out.result is None:
+            if out.reasons == ("STATUS_INCOMPLETE",):   # file chưa có status nào -> vẫn Email 1, không REVIEW
+                plan.action = Action.WAIT
             plan.reasons.extend(out.reasons)
             continue
         dates = [ln.order_date.date() for ln in out.result.lines if ln.order_date]
@@ -330,6 +332,17 @@ def status_mail_for(p: CasePlan, rows: Mapping[int, FbjtRow], brand_emails: Mapp
 
 
 # --------------------------------------------------------------------------------------------------------- CLI
+def _safe_error(exc: Exception) -> str:
+    """Câu lỗi in ra log CI: lỗi cấu hình và lỗi đọc Google (403/404/429...) in nguyên văn, bỏ phần trong nháy
+    (tên file có thể là tên brand); lỗi khác ẩn chi tiết."""
+    from app.recon.google_bot import BotConfigError
+
+    if isinstance(exc, BotConfigError):
+        return str(exc)
+    if isinstance(exc, SheetAccessError):
+        return re.sub(r"'[^']*'", "'…'", str(exc))
+    return "(chi tiết ẩn)"
+
 def _fixture_opener(orders: dict[str, list[list[Any]]]) -> Callable[[str], OrderOpener]:
     by_id = {parse_sheet_url(u).spreadsheet_id: rows for u, rows in orders.items()}
 
@@ -513,15 +526,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.mode == "run-once" and not a.live:
         p.error("run-once chỉ chạy với --live")
     if a.live:
-        from app.recon.google_bot import BotConfigError
-
         try:
             if a.mode == "run-once":
                 print("\n".join(_run_once(today, now, a.scope_from)))
                 return 0
             plans = _live(today, now, a.scope_from).plans
         except Exception as exc:  # noqa: BLE001 — log CI: không in chi tiết có thể chứa dữ liệu brand
-            print(f"LỖI {type(exc).__name__}: {exc if isinstance(exc, BotConfigError) else '(chi tiết ẩn)'}",
+            print(f"LỖI {type(exc).__name__}: {_safe_error(exc)}",
                   file=sys.stderr)
             return 1
     else:
