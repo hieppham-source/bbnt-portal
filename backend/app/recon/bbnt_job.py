@@ -12,7 +12,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.core.calculation import normalize_text
+from app.core.calculation import IssueCode, normalize_text
 from app.errors import BbntError
 from app.master.models import MasterData
 from app.recon.fbjt import brand_key
@@ -83,6 +83,12 @@ class BbntOutcome:
         return not {"CONTRACT_NOT_FOUND", "CONTRACT_AMBIGUOUS"} & set(self.reasons)
 
 
+def _has_blank_status(details: object) -> bool:
+    """Dòng status trống -> issue UNKNOWN_STATUS không kèm "(status: ...)" (xem ``compute_nmv``)."""
+    return any(getattr(i, "code", None) is IssueCode.UNKNOWN_STATUS and "(status:" not in i.message
+               for i in (details if isinstance(details, list) else []))
+
+
 def make_bbnt(templates: TemplateRegistry, master: MasterData, case: CaseBbnt, open_order: OrderOpener, *,
               issued_at: datetime, render: bool) -> BbntOutcome:
     """Chạy generator; lỗi nghiệp vụ trả về ``reasons`` (không raise) để worker chuyển NEEDS_REVIEW."""
@@ -93,6 +99,8 @@ def make_bbnt(templates: TemplateRegistry, master: MasterData, case: CaseBbnt, o
     try:
         r = BbntGenerator(templates, clock=lambda: issued_at).run(master, inp, open_order, render=render)
     except BbntError as exc:
+        if exc.code == "NO_DELIVERED_ORDERS" and _has_blank_status(exc.details):
+            return BbntOutcome(None, ("STATUS_INCOMPLETE",))   # brand chưa điền status, không phải 0 đơn giao
         return BbntOutcome(None, (exc.code,))
     except SheetAccessError:
         return BbntOutcome(None, ("ORDER_SHEET_UNREADABLE",))

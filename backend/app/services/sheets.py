@@ -142,8 +142,14 @@ class GoogleSheetsReader:
             raise ValueError("Thiếu access token Google")
         if session is None:
             import requests
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
 
             session = requests.Session()
+            # Google trả 429 (quota/phút) hoặc 5xx tạm thời khi đọc nhiều file liên tiếp -> thử lại có giãn cách.
+            retry = Retry(total=5, backoff_factor=2, status_forcelist=(429, 500, 502, 503, 504),
+                          allowed_methods=frozenset({"GET"}), respect_retry_after_header=True, raise_on_status=False)
+            session.mount("https://", HTTPAdapter(max_retries=retry))
         session.headers["Authorization"] = f"Bearer {access_token}"
         self._session: Any = session
         self._timeout = timeout

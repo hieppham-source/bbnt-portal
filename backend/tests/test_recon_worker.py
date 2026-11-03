@@ -323,3 +323,27 @@ def test_blank_order_status_waits_for_brand_before_bbnt(run):
     assert (p.action, p.reasons, p.bbnt_number, p.cells) == (Action.WAIT, ["STATUS_INCOMPLETE"], None, [])
     assert p.job is not None and p.order_period == (date(2026, 5, 3), date(2026, 6, 2))   # mọi dòng của link (như BBNT)
     assert p.hints == ["1 dòng order chưa có status ở cột 'Tình trạng lên đơn'"]
+
+
+ALL_BLANK = {**ORDERS, ORDER_URL_FB: [r if i < 2 else [r[0], r[1], "", *r[3:]] for i, r in enumerate(ORGANICA_MAY)]}
+
+
+def test_order_file_without_any_status_waits_instead_of_no_delivered(run):
+    [p] = run(row(*ORG), orders=ALL_BLANK)        # trước đây: REVIEW NO_DELIVERED_ORDERS, không gửi Email 1
+    assert (p.action, p.reasons) == (Action.WAIT, ["STATUS_INCOMPLETE"]) and p.job is not None
+
+
+def test_safe_error_shows_sheet_errors_without_file_names() -> None:
+    from app.recon.worker import _safe_error
+    from app.services.sheets import SheetAccessError
+
+    assert _safe_error(SheetAccessError("Google Sheets API lỗi 429")) == "Google Sheets API lỗi 429"
+    assert "SVR" not in _safe_error(SheetAccessError("File 'SVR ORDER 09' không phải Google Sheet"))
+    assert _safe_error(ValueError("brand SVR 123")) == "(chi tiết ẩn)"
+
+
+def test_google_reader_retries_rate_limits() -> None:
+    from app.services.sheets import GoogleSheetsReader
+
+    retry = GoogleSheetsReader("tok")._session.get_adapter("https://sheets.googleapis.com").max_retries
+    assert 429 in retry.status_forcelist and retry.total >= 3
