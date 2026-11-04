@@ -13,6 +13,7 @@
 | `DATABASE_URL` | Render env + GitHub Secrets (worker) | Neon Postgres |
 | `RECON_GOOGLE_CLIENT_ID`, `RECON_GOOGLE_CLIENT_SECRET`, `RECON_GOOGLE_REFRESH_TOKEN` | GitHub Secrets (worker), Render env (API preview) | Token hộp thư gửi |
 | `RECON_APPROVERS` | Render env | Email được duyệt trên portal |
+| `RECON_FBJT_ID` | Render env + GitHub Variables | FB.JT: brand, hợp đồng, Bên A, email lấy từ tab **DATA BRAND** (từ 04/11/2026); Sheet master chỉ còn PHAP_NHAN + MAPPING. Render để trống = portal dùng tab BRAND/HOP_DONG của master như cũ |
 | `RECON_SEND_MODE` (`off`/`review`/`auto`), `RECON_SHEET_WRITE` (`off`/`on`) | Worker env | Bật theo phase; mặc định `off` |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | GitHub Secrets | Deploy frontend từ CI |
 

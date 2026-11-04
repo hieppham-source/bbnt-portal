@@ -38,6 +38,8 @@ class Settings:
     dev_auth_header: bool = False                      # CHỈ dev: cho phép X-User-Email không token
     # Master data
     master_sheet_url: str | None = None                # Google Sheet master (hợp đồng, brand, pháp nhân, mapping)
+    #: FB.JT (id hoặc link): brand + hợp đồng + Bên A lấy từ tab DATA BRAND thay tab BRAND/HOP_DONG của master
+    data_brand_sheet: str | None = None
     master_file: str | None = None                     # CHỈ dev/test: file .xlsx thay cho Sheet master
     master_cache_seconds: int = 60
     templates_dir: str = DEFAULT_TEMPLATES_DIR
@@ -67,6 +69,7 @@ class Settings:
             allowed_emails=tuple(x.lower() for x in _csv(e.get("ALLOWED_EMAILS"))),
             dev_auth_header=e.get("DEV_AUTH_HEADER", "false").lower() in ("1", "true", "yes"),
             master_sheet_url=e.get("MASTER_SHEET_URL") or None,
+            data_brand_sheet=e.get("RECON_FBJT_ID") or None,
             master_file=e.get("MASTER_FILE") or None,
             master_cache_seconds=cache,
             templates_dir=e.get("TEMPLATES_DIR") or DEFAULT_TEMPLATES_DIR,

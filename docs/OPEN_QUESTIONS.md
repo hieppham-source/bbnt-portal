@@ -38,3 +38,11 @@ EMAIL 2 (confirm số + BBNT) là thư nghiệm thu của bot. Mâu thuẫn gi�
 | Q18 | 3B đính kèm HĐ nháp PDF; Email 4 cần `{{THONG_TIN_TK}}` | Chưa có nguồn | **Kế toán tự gửi HĐ nháp**, bot chỉ gửi bản nhắc lại 3B. Email 4 **bỏ dòng thông tin chuyển khoản** |
 
 Ghi chú triển khai (30/10/2026): nhắc thanh toán bắt đầu từ **ngày đến hạn** (4A, theo mẫu "từ ngày {{HAN_THANH_TOAN}}"), quá hạn dùng 4B + phạt (Q17). Bot chưa tự hiểu nội dung thư brand (xác nhận / từ chối) — chỉ báo "brand trả lời" để KAM xử lý (ARCHITECTURE 2.4-5: câu chữ xác nhận do anh định nghĩa).
+
+## Chốt 04/11/2026 — nguồn dữ liệu DATA BRAND
+
+- Brand, hợp đồng, Bên A, email nhận thư (bot + portal) lấy từ tab `DATA BRAND` của FB.JT; bỏ `DATA CONTRACT` và tab BRAND/HOP_DONG của Sheet master (master còn PHAP_NHAN + MAPPING). Code: `backend/app/master/data_brand.py`.
+- Hợp đồng dùng được = STATUS `CÒN HIỆU LỰC`, không xét ngày. % hoa hồng = cột `COMMISSION (chưa bao gồm VAT)` (không dùng CMS).
+- Phụ lục: thêm cột `SỐ PHỤ LỤC` + `NGÀY KÝ PHỤ LỤC` vào DATA BRAND; cột số HĐ chỉ ghi số HĐ gốc.
+- Portal chỉ lập BBNT kênh FB. Thuế suất riêng theo brand (cột cũ của master) không còn — dùng thuế của pháp nhân.
+- Nhiều brand cùng group dùng chung 1 số HĐ → 1 hợp đồng theo group (BBNT gộp group tìm được).

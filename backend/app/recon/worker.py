@@ -249,7 +249,7 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
                                  group_code=next(iter(groups_)) if len(groups_) == 1 else None)
         if len(found) != 1:
             plan.reasons.append("CONTRACT_NOT_UNIQUE")
-            plan.hints.append(f"DATA CONTRACT 'Đã ký' khớp {'/'.join(brands)} + {entity}: "
+            plan.hints.append(f"DATA BRAND 'CÒN HIỆU LỰC' khớp {'/'.join(brands)} + {entity}: "
                               + (", ".join(found) if found else "không có"))
             continue
         plan.job = CaseBbnt(entity, brands, plan.campaign, found[0])
@@ -399,6 +399,7 @@ class Live:
 
 
 def _live(today: date, now: datetime, scope_from: date, issued_at: Mapping[str, datetime] | None = None) -> Live:
+    from app.master.data_brand import with_data_brand
     from app.master.repository import build_master, google_sheet_source
     from app.recon.google_bot import (
         BotEnv,
@@ -424,9 +425,11 @@ def _live(today: date, now: datetime, scope_from: date, issued_at: Mapping[str, 
 
     values = reader.read(fbjt, sheet_name=f"FB-{today.year}")
     data_brand = reader.read(fbjt, sheet_name="DATA BRAND")
-    master = build_master(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))())
+    # Brand + hợp đồng + Bên A: DATA BRAND (chốt 04/11/2026); Sheet master chỉ còn pháp nhân B + mapping
+    master = build_master(with_data_brand(google_sheet_source(reader, parse_sheet_url(env.master_sheet_url))(),
+                                          data_brand))
     templates = TemplateRegistry(DEFAULT_TEMPLATES_DIR)
-    plans = plan_cases(values, links, parse_contracts(reader.read(fbjt, sheet_name="DATA CONTRACT")), master,
+    plans = plan_cases(values, links, parse_contracts(data_brand), master,
                        templates, open_order, today=today, now=now, issued_at=issued_at,
                        brand_op=parse_brand_op(data_brand), scope_from=scope_from)
 

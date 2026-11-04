@@ -11,7 +11,6 @@ Biến môi trường (GitHub Secrets / Variables, không bao giờ in ra log):
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -85,25 +84,22 @@ def _text(v: Any) -> str:
 
 # ----------------------------------------------------------------------------------------- DATA CONTRACT / BRAND
 def parse_contracts(values: Sequence[Sequence[Any]]) -> list[ContractRow]:
-    """``DATA CONTRACT`` (FB.JT, chỉ kênh FB). Mỗi dòng sinh 1 ContractRow theo BRAND và 1 theo GROUP BRAND
-    (nếu khác) — ``signed_contracts`` khớp brand HOẶC group, số hợp đồng trùng được gộp."""
-    h, col = _header_index(values, ["brand", "status", "so hop dong"])
-    pn = next((j for name, j in col.items() if name.startswith("phap nhan b")), None)
-    if pn is None:
-        raise BotConfigError("DATA CONTRACT thiếu cột 'PHÁP NHÂN B'")
+    """Hợp đồng FB từ tab ``DATA BRAND`` (chốt 04/11/2026, thay DATA CONTRACT): 1 dòng = 1 brand; cột
+    ``PHÁP NHÂN B`` (Cty EZS / HKD SASSY), ``STATUS`` (CÒN HIỆU LỰC = dùng được), ``SỐ HỢP ĐỒNG ...``."""
+    h, col = _header_index(values, ["brand", "status", "phap nhan b"])
+    no_col = next((j for name, j in col.items() if name.startswith("so hop dong")), None)
+    if no_col is None:
+        raise BotConfigError("DATA BRAND thiếu cột 'SỐ HỢP ĐỒNG'")
     out: list[ContractRow] = []
     for row in values[h + 1:]:
-        no = _text(_get(row, col["so hop dong"]))
-        if not no:
-            continue
-        entity = entity_code(_text(_get(row, pn))) or _text(_get(row, pn))
-        status = _text(_get(row, col["status"]))
-        brands = re.split(r"[\r\n,]+", str(_get(row, col["brand"]) or ""))   # 1 ô có thể ghi nhiều brand
-        for b in {_text(x) for x in brands} - {""}:
-            out.append(ContractRow(no, b, entity, "FB", status))
-        group = _text(_get(row, col.get("group brand")))
-        if group:
-            out.append(ContractRow(no, group, entity, "FB", status, level="group"))
+        no, brand = _text(_get(row, no_col)), _text(_get(row, col["brand"]))
+        if no and brand:
+            entity = _text(_get(row, col["phap nhan b"]))
+            ent, status = entity_code(entity) or entity, _text(_get(row, col["status"]))
+            out.append(ContractRow(no, brand, ent, "FB", status))
+            group = _text(_get(row, col.get("group")))
+            if group:          # brand chưa có HĐ riêng -> dùng HĐ của group (như DATA CONTRACT trước đây)
+                out.append(ContractRow(no, group, ent, "FB", status, level="group"))
     return out
 
 
@@ -115,11 +111,14 @@ def parse_brand_op(values: Sequence[Sequence[Any]]) -> dict[str, str]:
 
 
 def parse_brand_emails(values: Sequence[Sequence[Any]]) -> dict[str, str]:
-    """``DATA BRAND``: brand (chuẩn hoá) -> ô ``EMAIL BRAND`` (có thể nhiều địa chỉ). Brand trùng -> ghép lại."""
-    h, col = _header_index(values, ["brand", "email brand"])
+    """``DATA BRAND``: brand (chuẩn hoá) -> ô ``EMAIL NHẬN HÓA ĐƠN`` (nhiều địa chỉ). Brand trùng -> ghép."""
+    h, col = _header_index(values, ["brand"])
+    email = col.get("email nhan hoa don", col.get("email brand"))     # cột đổi tên 04/11/2026
+    if email is None:
+        raise BotConfigError("DATA BRAND thiếu cột 'EMAIL NHẬN HÓA ĐƠN'")
     out: dict[str, str] = {}
     for r in values[h + 1:]:
-        b, e = _text(_get(r, col["brand"])), str(_get(r, col["email brand"]) or "").strip()
+        b, e = _text(_get(r, col["brand"])), str(_get(r, email) or "").strip()
         if b and e:
             k = brand_key(b)
             out[k] = f"{out[k]},{e}" if k in out else e

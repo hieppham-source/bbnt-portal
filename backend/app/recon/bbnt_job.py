@@ -14,6 +14,7 @@ from datetime import datetime
 
 from app.core.calculation import IssueCode, normalize_text
 from app.errors import BbntError
+from app.master.data_brand import brand_code
 from app.master.models import MasterData
 from app.recon.fbjt import brand_key
 from app.recon.rules import campaign_program_name, campaign_suffix
@@ -22,7 +23,7 @@ from app.services.sheets import SheetAccessError
 from app.services.templates import TemplateRegistry
 
 CHANNEL = "FB"
-_SIGNED = normalize_text("Đã ký")
+_SIGNED = {normalize_text("Đã ký"), normalize_text("CÒN HIỆU LỰC")}   # DATA BRAND STATUS (04/11/2026)
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def signed_contracts(rows: Iterable[ContractRow], *, brand_codes: Sequence[str],
                      entity: str) -> list[str]:
     """Số hợp đồng ``Đã ký`` + pháp nhân B + kênh FB. Từng brand: HĐ ghi theo BRAND nếu có, không có mới lấy HĐ
     theo GROUP (vd TEFAL có HĐ riêng dù group WELLHOME còn HĐ BOSCH). Gộp các brand; Audit Gate cần đúng 1."""
-    ok = [r for r in rows if r.contract_no.strip() and normalize_text(r.status) == _SIGNED
+    ok = [r for r in rows if r.contract_no.strip() and normalize_text(r.status) in _SIGNED
           and normalize_text(r.entity_b) == normalize_text(entity) and normalize_text(r.channel) == "fb"]
     by_group = {r.contract_no.strip() for r in ok if group_code and brand_key(r.brand) == brand_key(group_code)}
     hits: set[str] = set()
@@ -61,7 +62,7 @@ class CaseBbnt:
 
 def build_input(case: CaseBbnt) -> BbntInput:
     """Sai dạng campaign -> ``ValueError`` (chuyển KAM, không đoán)."""
-    brands = sorted({b.strip().upper() for b in case.brand_codes if b.strip()})
+    brands = sorted({brand_code(b) for b in case.brand_codes if brand_code(b)})   # = mã brand dựng từ DATA BRAND
     if not brands:
         raise ValueError("Case không có brand")
     program = campaign_program_name(case.campaign)
