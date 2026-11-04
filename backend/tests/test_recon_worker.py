@@ -191,11 +191,13 @@ def test_nmv_only_delivered_and_excluded_statuses_are_reported(run):
         ["08/05/2026", "X6", "Confirmed", "Organica", "ORG-01", "Serum", 1, 10_000],       # Q9: tính NMV
     ])}
     [p] = run(row(*ORG), links=[OrderLink("ORGANICA", "BDAY - 05/2026", url)], orders=orders)
+    # Bot: status lạ ("Đang giao") = brand chưa điền đủ -> WAIT + Email 1 (anh Hiệp chốt 04/11/2026, thay Q9 cho bot)
+    assert (p.action, p.reasons, p.cells) == (Action.WAIT, ["STATUS_INCOMPLETE"], [])
+    done = [r if r[1:2] != ["X4"] else [*r[:2], "Đã giao", *r[3:]] for r in orders[url]]
+    [p] = run(row(*ORG), links=[OrderLink("ORGANICA", "BDAY - 05/2026", url)], orders={**orders, url: done})
     cells = {c.column: c.target for c in p.cells}
-    assert cells["nmv"] == 1_110_000 and cells["gmv"] == 6_610_000
-    assert p.warnings == {"RETURNED": 1, "CANCELLED": 1, "UNKNOWN_STATUS": 1}
-    # Status lạ bị LOẠI khỏi NMV và chỉ cảnh báo, không chặn (Q9 chốt 28/10/2026).
-    assert p.action is Action.DRAFT
+    assert cells["nmv"] == 4_110_000 and cells["gmv"] == 6_610_000
+    assert p.warnings == {"RETURNED": 1, "CANCELLED": 1} and p.action is Action.DRAFT
 
 
 def test_k_keeps_ezs_vat_8_and_sassy_deduct_1(run):
@@ -322,7 +324,7 @@ def test_blank_order_status_waits_for_brand_before_bbnt(run):
     [p] = run(row(*ORG), orders=BLANK_STATUS)
     assert (p.action, p.reasons, p.bbnt_number, p.cells) == (Action.WAIT, ["STATUS_INCOMPLETE"], None, [])
     assert p.job is not None and p.order_period == (date(2026, 5, 3), date(2026, 6, 2))   # mọi dòng của link (như BBNT)
-    assert p.hints == ["1 dòng order chưa có status ở cột 'Tình trạng lên đơn'"]
+    assert p.hints == ["1 dòng order chưa có status hợp lệ ở cột 'Tình trạng lên đơn'"]
 
 
 ALL_BLANK = {**ORDERS, ORDER_URL_FB: [r if i < 2 else [r[0], r[1], "", *r[3:]] for i, r in enumerate(ORGANICA_MAY)]}
@@ -331,6 +333,16 @@ ALL_BLANK = {**ORDERS, ORDER_URL_FB: [r if i < 2 else [r[0], r[1], "", *r[3:]] f
 def test_order_file_without_any_status_waits_instead_of_no_delivered(run):
     [p] = run(row(*ORG), orders=ALL_BLANK)        # trước đây: REVIEW NO_DELIVERED_ORDERS, không gửi Email 1
     assert (p.action, p.reasons) == (Action.WAIT, ["STATUS_INCOMPLETE"]) and p.job is not None
+
+
+ODD_STATUS = {**ORDERS, ORDER_URL_FB: [r if r[1:2] != ["FB002"] else [r[0], r[1], "CHƯA XỬ LÝ", *r[3:]]
+                                        for r in ORGANICA_MAY]}
+
+
+def test_unrecognised_order_status_waits_like_blank(run):
+    [p] = run(row(*ORG), orders=ODD_STATUS)        # anh Hiệp chốt 04/11/2026: status lạ = chưa điền đủ
+    assert (p.action, p.reasons, p.bbnt_number) == (Action.WAIT, ["STATUS_INCOMPLETE"], None)
+    assert p.hints == ["1 dòng order chưa có status hợp lệ ở cột 'Tình trạng lên đơn' (status lạ: CHƯA XỬ LÝ)"]
 
 
 def test_safe_error_shows_sheet_errors_without_file_names() -> None:

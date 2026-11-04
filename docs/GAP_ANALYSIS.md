@@ -27,7 +27,7 @@ Không có chức năng recon nào đang **chạy** ở production: chưa có `D
 | Yêu cầu | Hiện có | Thiếu | Chặn bởi |
 |---|---|---|---|
 | NMV chỉ `Đã giao`; Hoàn/Hủy loại | Có (`calculation.py`) | — | — |
-| Status lạ | Loại khỏi NMV + cảnh báo, không chặn; NMV tính thêm hoàn thành / đã xong / confirm (portal + bot) | — | Q9 đã chốt |
+| Status lạ | Portal: loại khỏi NMV + cảnh báo, không chặn. Bot: WAIT `STATUS_INCOMPLETE` + Email 1 (chốt 04/11/2026); NMV tính thêm hoàn thành / đã xong / confirm | — | Q9 đã chốt |
 | EZS VAT 8%, Sassy khấu trừ 1% | Có, theo `PHAP_NHAN` hiệu lực tới 31/12/2026; test K của worker | Dòng thuế 2027 | Q10: giữ nguyên; từ 01/01/2027 BBNT mới → REVIEW |
 | Facebook | Có (template EZS/Sassy FB Non-OP) | — | — |
 | TikTok Shop | Số BBNT hỗ trợ `TTS` (portal) | Bot TTS | Q11: tạm bỏ |

@@ -16,7 +16,7 @@ Chỉ ghi điều **chưa chốt**. Quyết định đã chốt nằm ở `ARCHI
 
 | # | Quyết định | Hiện thực |
 |---|---|---|
-| Q9 | NMV tính đơn `Đã giao` và các status tương tự hoàn thành / đã xong / confirm — **cả portal và bot**. Status khác vẫn loại khỏi NMV + cảnh báo, không chặn | `DEFAULT_STATUS_ALIASES` (`calculation.py`): thêm `Hoàn thành`, `Đã hoàn thành`, `Finish(ed)`, `Completed`, `Đã xong`, `Done`, `Confirm(ed)`, `Đã xác nhận` |
+| Q9 | NMV tính đơn `Đã giao` và các status tương tự hoàn thành / đã xong / confirm — **cả portal và bot**. Status khác vẫn loại khỏi NMV + cảnh báo, không chặn. **Bot (chốt 04/11/2026):** status lạ (vd `CHƯA XỬ LÝ`) tính như chưa điền → WAIT `STATUS_INCOMPLETE` + Email 1, không lập BBNT; portal giữ nguyên | `DEFAULT_STATUS_ALIASES` (`calculation.py`): thêm `Hoàn thành`, `Đã hoàn thành`, `Finish(ed)`, `Completed`, `Đã xong`, `Done`, `Confirm(ed)`, `Đã xác nhận` |
 | Q10 | Bỏ qua, giữ cấu hình thuế hiện tại | Không đổi code; BBNT lập từ 01/01/2027 vẫn `TAX_RULE_MISSING` → REVIEW cho tới khi `PHAP_NHAN` có dòng mới |
 | Q11 | Tạm bỏ TikTok Shop cho bot | Bot chỉ FB |
 | Q12 | Bot kiểm hiệu lực hợp đồng theo **ngày lập BBNT** | Worker: ngoài [Hiệu lực từ, Hiệu lực đến] của tab HOP_DONG → `CONTRACT_NOT_VALID_ON_BBNT_DATE` (REVIEW). Portal không đổi |
