@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
 from app.core.calculation import normalize_text, parse_money
 from app.master.data_brand import brand_code, data_brand_columns
 from app.recon.fbjt import FbjtRow, parse_rows
+from app.recon.rules import BusinessCalendar, days_late, parse_invoices, payment_due
 
 ZERO = Decimal(0)
 
@@ -77,10 +79,28 @@ class Summary:
     by_month: dict[str, Bucket] = field(default_factory=dict)
     months: list[str] = field(default_factory=list)
     pics: list[str] = field(default_factory=list)
+    overdue: dict[str, Late] = field(default_factory=dict)        # brand -> nợ quá hạn
+
+
+@dataclass
+class Late:
+    amount: Decimal = ZERO
+    days: int = 0                 # số ngày trễ lâu nhất của brand
+
+
+def overdue_days(r: FbjtRow, today: date, cal: BusinessCalendar) -> int:
+    """Dòng chưa Done, đã có K + hoá đơn trong ghi chú: trễ = hôm nay − (ngày HĐ sớm nhất + 10 ngày làm việc, Q17)."""
+    invoices = parse_invoices(r.invoice_note)
+    if not r.commission or not invoices:
+        return 0
+    return days_late(payment_due(min(i.issued_on for i in invoices), cal), today)
 
 
 def summarize(values: Sequence[Sequence[Any]], data_brand: Sequence[Sequence[Any]], *, month: str | None = None,
-              pic: str | None = None) -> Summary:
+              pic: str | None = None, today: date | None = None,
+              cal: BusinessCalendar | None = None) -> Summary:
+    # shortcut: lịch mặc định chỉ có lễ dương lịch cố định (không đọc bảng holiday đã duyệt) — sai 1–2 ngày quanh Tết
+    today, cal = today or date.today(), cal or BusinessCalendar()
     parsed = parse_rows(values)
     rates = contract_rates(data_brand)
     rows = [(r, False) for r in parsed.rows] + [(r, True) for r in parsed.done]
@@ -91,4 +111,9 @@ def summarize(values: Sequence[Sequence[Any]], data_brand: Sequence[Sequence[Any
             continue
         out.total.add(r, done, rates)
         out.by_month.setdefault(r.month or "?", Bucket()).add(r, done, rates)
+        late = 0 if done else overdue_days(r, today, cal)
+        if late:
+            b = out.overdue.setdefault(r.brand, Late())
+            b.amount += r.commission or ZERO
+            b.days = max(b.days, late)
     return out

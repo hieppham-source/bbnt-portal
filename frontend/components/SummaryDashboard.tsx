@@ -114,6 +114,37 @@ export default function SummaryDashboard() {
 
       <section className="card">
         <div className="card-head">
+          <h2>Brand chậm trả ({data?.overdue.length ?? 0})</h2>
+          <span className="hint">Hạn = ngày hoá đơn + 10 ngày làm việc, chưa Done trả tiền</span>
+        </div>
+        {!data || data.overdue.length === 0 ? (
+          <p className="hint">{busy ? "Đang tải…" : "Không có brand nào quá hạn."}</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="num-table">
+              <thead>
+                <tr>
+                  <th scope="col">Brand</th>
+                  <th scope="col">Tổng tiền</th>
+                  <th scope="col">Số ngày trễ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.overdue.map((o) => (
+                  <tr key={o.brand}>
+                    <th scope="row">{o.brand}</th>
+                    <td>{vnd(o.amount)}</td>
+                    <td className={o.days_late > 30 ? "late-bad" : undefined}>{o.days_late}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-head">
           <h2>Theo tháng</h2>
           <div className="legend" aria-hidden="true">
             <span><i className="dot collected" />Đã thu</span>

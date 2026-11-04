@@ -323,6 +323,7 @@ export type SummaryOut = {
   months: (SummaryBucket & { month: string })[]
   month_options: string[]
   pic_options: string[]
+  overdue: { brand: string; amount: string; days_late: number }[]
 }
 export const getSummary = (t: Tokens, q: { year?: number; month?: string; pic?: string }): Promise<SummaryOut> => {
   const p = new URLSearchParams()

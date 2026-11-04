@@ -95,6 +95,7 @@ table.num-table td, table.num-table th { vertical-align: middle; }
 table.num-table tbody tr:hover { background: var(--soft); }
 table.num-table tfoot th, table.num-table tfoot td { font-weight: 600; border-top: 2px solid var(--text); border-bottom: none; }
 table.num-table tfoot th:first-child, table.num-table tbody th { text-align: left; }
+td.late-bad { color: var(--c-cancel); font-weight: 600; }
 .bar-col { width: 28%; min-width: 140px; }
 .stack-bar { display: flex; height: 10px; border-radius: 999px; background: var(--soft); overflow: hidden; }
 .stack-bar .seg { display: block; height: 100%; }
