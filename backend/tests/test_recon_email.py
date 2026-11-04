@@ -102,7 +102,7 @@ def test_test_message_goes_only_to_test_inbox():
 
 
 def test_parse_brand_emails_merges_duplicate_brand_rows():
-    got = parse_brand_emails([["GROUP", "BRAND", "OP", "EMAIL BRAND"], ["G", "Organica", "", "a@x.vn"],
+    got = parse_brand_emails([["GROUP", "BRAND", "OP", "EMAIL NHẬN HÓA ĐƠN"], ["G", "Organica", "", "a@x.vn"],
                               ["G", "ORGANICA", "", "b@x.vn"], ["G", "NoMail", "", ""]])
     assert got == {"organica": "a@x.vn,b@x.vn"}
 

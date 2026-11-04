@@ -74,21 +74,22 @@ def test_entity_code(text, code):
     assert entity_code(text) == code
 
 
-DATA_CONTRACT = [
-    [],
-    ["GROUP BRAND", "BRAND", "Email nhận hóa đơn", "STATUS", "SỐ HỢP ĐỒNG ", "NGÀY ĐẾN HẠN", "COMMISSION",
-     "FINAL", "HÌNH THỨC HỢP TÁC", "PHÁP NHÂN A\n(BRAND)", "PHÁP NHÂN B\n(EZ/SS)"],
-    ["SHISEIDO_GRP", "SHISEIDO", "", "Đã ký", "05/2026/HĐDV/SS-SHISEIDO", 46147, 0.15, 0.15, "NON OP", "A", "SASSY"],
-    ["ORGANICA", "ORGANICA", "", "Hết hạn", "00/2025/OLD", 46000, 0.18, 0.18, "NON OP", "A", "Cty EZS"],
-    ["", "", "", "", ""],
+DATA_BRAND = [
+    ["GROUP", "BRAND", "PIC", "CMS", "OP", "PHÁP NHÂN B", "PHÁP NHÂN BÊN A", "EMAIL NHẬN HÓA ĐƠN", "STATUS",
+     "SỐ HỢP ĐỒNG hoặc Phụ lục hợp đồng thêm", "NGÀY KÝ HỢP ĐỒNG\n(dd/mm/yy)", "NGÀY ĐẾN HẠN",
+     "COMMISSION\n(chưa bao gồm VAT)"],
+    ["SHISEIDO_GRP", "SHISEIDO", "x", "15%", "NON OP", "HKD SASSY", "A", "a@b.vn", "CÒN HIỆU LỰC",
+     "05/2026/HĐDV/SS-SHISEIDO", "01/05/2026", "31/12/2026", "15%"],
+    ["ORGANICA", "ORGANICA", "x", "18%", "NON OP", "Cty EZS", "A", "", "HẾT HIỆU LỰC", "00/2025/OLD"],
+    ["X", "NOCONTRACT", "x", "18%", "NON OP", "Cty EZS"],
 ]
 
 
 def test_parse_contracts_rows_for_brand_and_group():
-    got = parse_contracts(DATA_CONTRACT)
-    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO", "SASSY", "FB", "Đã ký") in got
-    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO_GRP", "SASSY", "FB", "Đã ký", "group") in got
-    assert ContractRow("00/2025/OLD", "ORGANICA", "EZS", "FB", "Hết hạn") in got and len(got) == 4
+    got = parse_contracts(DATA_BRAND)
+    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO", "SASSY", "FB", "CÒN HIỆU LỰC") in got
+    assert ContractRow("05/2026/HĐDV/SS-SHISEIDO", "SHISEIDO_GRP", "SASSY", "FB", "CÒN HIỆU LỰC", "group") in got
+    assert ContractRow("00/2025/OLD", "ORGANICA", "EZS", "FB", "HẾT HIỆU LỰC") in got and len(got) == 4
 
 
 def test_parse_contracts_missing_header():
@@ -180,16 +181,16 @@ def test_live_without_env_fails_fast(monkeypatch, capsys):
     assert "Thiếu biến môi trường" in capsys.readouterr().err
 
 
-def test_contract_brand_match_wins_over_group_and_multi_brand_cells():
+def test_contract_brand_match_wins_over_group():
     from app.recon.bbnt_job import signed_contracts
     rows = parse_contracts([
-        ["GROUP BRAND", "BRAND", "Email", "STATUS", "SỐ HỢP ĐỒNG", "PHÁP NHÂN B\n(EZ/SS)"],
-        ["WELLHOME", "TEFAL", "", "Đã ký", "01082025/TEFAL-EZS-FB", "EZS"],
-        ["WELLHOME", "BOSCH", "", "Đã ký", "28112025/BOSCH-EZS-FB", "EZS"],
-        ["BRANDPARTNER", "BERGHOFF\r\nNACHTMANN\r\nFISSLER ", "", "Đã ký", "012026/BRANDPARTNER-EZS-FB", "EZS"],
-        ["DKSH", "URIGAE", "", "Đã ký", "01082024/DKSH-EZ-FB", "EZS"],
+        ["GROUP", "BRAND", "PHÁP NHÂN B", "STATUS", "SỐ HỢP ĐỒNG hoặc Phụ lục hợp đồng thêm"],
+        ["WELLHOME", "TEFAL", "Cty EZS", "CÒN HIỆU LỰC", "01082025/TEFAL-EZS-FB"],
+        ["WELLHOME", "BOSCH", "Cty EZS", "CÒN HIỆU LỰC", "28112025/BOSCH-EZS-FB"],
+        ["BRANDPARTNER", "NACHTMANN", "Cty EZS", "CÒN HIỆU LỰC", "012026/BRANDPARTNER-EZS-FB"],
+        ["DKSH", "URIGAE", "Cty EZS", "CÒN HIỆU LỰC", "01082024/DKSH-EZ-FB"],
         ["DKSH", "AVENE"],                                          # dòng thiếu số HĐ -> dùng HĐ theo group
-        ["LDB", "CERAVE", "", "Chưa ký"],
+        ["LDB", "CERAVE", "Cty EZS", "HẾT HIỆU LỰC", "X"],
     ])
     find = lambda brands, group=None: signed_contracts(rows, brand_codes=brands, group_code=group, entity="EZS")  # noqa: E731
     assert find(["TEFAL"], "WELLHOME") == ["01082025/TEFAL-EZS-FB"]

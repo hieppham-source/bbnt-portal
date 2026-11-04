@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -14,10 +14,11 @@ from app.auth import AuthError, GoogleIdTokenVerifier
 from app.config import Settings, get_settings
 from app.errors import fail
 from app.google_token import AccessTokenVerifier
+from app.master.data_brand import DATA_BRAND_TAB, with_data_brand_source
 from app.master.models import MasterData
 from app.master.repository import MasterRepository, google_sheet_source, xlsx_source
 from app.services.generator import BbntGenerator
-from app.services.sheets import GoogleSheetsReader, SheetReader, parse_sheet_url
+from app.services.sheets import GoogleSheetsReader, SheetReader, SheetRef, parse_sheet_url
 from app.services.templates import TemplateRegistry
 
 
@@ -143,6 +144,11 @@ def get_sheet_reader(token: Annotated[str, Depends(get_google_access_token)]) ->
 MasterLoader = Callable[[bool], MasterData]
 
 
+def _data_brand_reader(reader: GoogleSheetsReader, sheet: str) -> Callable[[], Sequence[Sequence[Any]]]:
+    ref = parse_sheet_url(sheet) if "/" in sheet else SheetRef(sheet)
+    return lambda: reader.read(ref, sheet_name=DATA_BRAND_TAB)
+
+
 def get_master_loader(
     settings: Annotated[Settings, Depends(get_settings)],
     repo: Annotated[MasterRepository, Depends(get_master_repo)],
@@ -154,8 +160,10 @@ def get_master_loader(
     source = None
     if settings.master_sheet_url:
         token = get_google_access_token(user, verifier, x_google_access_token)
-        source = google_sheet_source(GoogleSheetsReader.from_access_token(token),
-                                     parse_sheet_url(settings.master_sheet_url))
+        reader = GoogleSheetsReader.from_access_token(token)
+        source = google_sheet_source(reader, parse_sheet_url(settings.master_sheet_url))
+        if settings.data_brand_sheet:      # brand + hợp đồng FB lấy từ FB.JT DATA BRAND (chốt 04/11/2026)
+            source = with_data_brand_source(source, _data_brand_reader(reader, settings.data_brand_sheet))
 
     def load(refresh: bool = False) -> MasterData:
         return repo.get(refresh=refresh, source=source)

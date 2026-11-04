@@ -307,3 +307,28 @@ export const markBrandConfirmed = (t: Tokens, id: string): Promise<unknown> =>
   call(t, `/api/v1/recon/cases/${id}/brand-confirmed`, { method: "POST" })
 export const resumeCase = (t: Tokens, id: string): Promise<unknown> =>
   call(t, `/api/v1/recon/cases/${id}/resume`, { method: "POST" })
+
+// ---------------------------------------------------------------- tổng quan (/)
+export type SummaryBucket = {
+  collected: string
+  pending: string
+  estimate: string
+  cancel_rate: string | null
+  rows: number
+  no_rate: number
+}
+export type SummaryOut = {
+  year: number
+  total: SummaryBucket
+  months: (SummaryBucket & { month: string })[]
+  month_options: string[]
+  pic_options: string[]
+}
+export const getSummary = (t: Tokens, q: { year?: number; month?: string; pic?: string }): Promise<SummaryOut> => {
+  const p = new URLSearchParams()
+  if (q.year) p.set("year", String(q.year))
+  if (q.month) p.set("month", q.month)
+  if (q.pic) p.set("pic", q.pic)
+  const qs = p.toString()
+  return call(t, `/api/v1/summary${qs ? `?${qs}` : ""}`).then((r) => r.json())
+}
