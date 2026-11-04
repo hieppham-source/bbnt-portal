@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import DEFAULT_TEMPLATES_DIR
-from app.core.calculation import normalize_text
+from app.core.calculation import OrderStatus, normalize_text
 from app.master.models import MasterData
 from app.recon.bbnt_job import CaseBbnt, ContractRow, make_bbnt, signed_contracts
 from app.recon.emailer import STATUS_COLUMN, BbntMail, StatusMail, camp_parts, split_addresses
@@ -262,10 +262,14 @@ def plan_cases(fbjt_values: Sequence[Sequence[Any]], links: Iterable[OrderLink],
             continue
         dates = [ln.order_date.date() for ln in out.result.lines if ln.order_date]
         plan.order_period = (min(dates), max(dates)) if dates else None
-        blank = sum(1 for ln in out.result.lines if not ln.raw_status.strip())
-        if blank:      # brand chưa điền đủ status -> Email 1 / nhắc, chưa lập BBNT (anh Hiệp chốt 30/10/2026)
+        # Status trống hoặc lạ (vd "CHƯA XỬ LÝ") = brand chưa điền đủ -> Email 1 / nhắc, chưa lập BBNT
+        # (anh Hiệp chốt 30/10/2026; status lạ chốt 04/11/2026)
+        pending = [ln.raw_status.strip() for ln in out.result.lines if ln.status is OrderStatus.UNKNOWN]
+        if pending:
             plan.action, plan.reasons = Action.WAIT, ["STATUS_INCOMPLETE"]
-            plan.hints.append(f"{blank} dòng order chưa có status ở cột '{STATUS_COLUMN}'")
+            odd = sorted({s for s in pending if s})
+            plan.hints.append(f"{len(pending)} dòng order chưa có status hợp lệ ở cột '{STATUS_COLUMN}'"
+                              + (f" (status lạ: {', '.join(odd)})" if odd else ""))
             continue
         plan.bbnt_number = str(out.result.number)
         for w in out.result.warnings:

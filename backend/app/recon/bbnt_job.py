@@ -83,9 +83,9 @@ class BbntOutcome:
         return not {"CONTRACT_NOT_FOUND", "CONTRACT_AMBIGUOUS"} & set(self.reasons)
 
 
-def _has_blank_status(details: object) -> bool:
-    """Dòng status trống -> issue UNKNOWN_STATUS không kèm "(status: ...)" (xem ``compute_nmv``)."""
-    return any(getattr(i, "code", None) is IssueCode.UNKNOWN_STATUS and "(status:" not in i.message
+def _has_pending_status(details: object) -> bool:
+    """Dòng status trống hoặc lạ -> issue UNKNOWN_STATUS (xem ``compute_nmv``)."""
+    return any(getattr(i, "code", None) is IssueCode.UNKNOWN_STATUS
                for i in (details if isinstance(details, list) else []))
 
 
@@ -99,7 +99,7 @@ def make_bbnt(templates: TemplateRegistry, master: MasterData, case: CaseBbnt, o
     try:
         r = BbntGenerator(templates, clock=lambda: issued_at).run(master, inp, open_order, render=render)
     except BbntError as exc:
-        if exc.code == "NO_DELIVERED_ORDERS" and _has_blank_status(exc.details):
+        if exc.code == "NO_DELIVERED_ORDERS" and _has_pending_status(exc.details):
             return BbntOutcome(None, ("STATUS_INCOMPLETE",))   # brand chưa điền status, không phải 0 đơn giao
         return BbntOutcome(None, (exc.code,))
     except SheetAccessError:
