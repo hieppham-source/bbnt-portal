@@ -50,7 +50,7 @@ class SummaryOut(BaseModel):
     months: list[MonthOut]
     month_options: list[str]
     pic_options: list[str]
-    overdue: list[LateOut]          # brand chậm trả, trễ lâu nhất trước
+    overdue: list[LateOut]          # group brand chậm trả, trễ lâu nhất trước
 
 
 @router.get("/summary", response_model=SummaryOut)

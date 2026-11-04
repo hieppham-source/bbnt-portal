@@ -79,13 +79,13 @@ class Summary:
     by_month: dict[str, Bucket] = field(default_factory=dict)
     months: list[str] = field(default_factory=list)
     pics: list[str] = field(default_factory=list)
-    overdue: dict[str, Late] = field(default_factory=dict)        # brand -> nợ quá hạn
+    overdue: dict[str, Late] = field(default_factory=dict)        # group brand (trống -> brand) -> nợ quá hạn
 
 
 @dataclass
 class Late:
     amount: Decimal = ZERO
-    days: int = 0                 # số ngày trễ lâu nhất của brand
+    days: int = 0                 # số ngày trễ lâu nhất trong group
 
 
 def overdue_days(r: FbjtRow, today: date, cal: BusinessCalendar) -> int:
@@ -113,7 +113,7 @@ def summarize(values: Sequence[Sequence[Any]], data_brand: Sequence[Sequence[Any
         out.by_month.setdefault(r.month or "?", Bucket()).add(r, done, rates)
         late = 0 if done else overdue_days(r, today, cal)
         if late:
-            b = out.overdue.setdefault(r.brand, Late())
+            b = out.overdue.setdefault(r.group or r.brand, Late())
             b.amount += r.commission or ZERO
             b.days = max(b.days, late)
     return out
