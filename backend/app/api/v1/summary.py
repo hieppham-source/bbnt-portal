@@ -38,12 +38,19 @@ class MonthOut(BucketOut):
     month: str
 
 
+class LateOut(BaseModel):
+    brand: str
+    amount: Decimal
+    days_late: int
+
+
 class SummaryOut(BaseModel):
     year: int
     total: BucketOut
     months: list[MonthOut]
     month_options: list[str]
     pic_options: list[str]
+    overdue: list[LateOut]          # brand chậm trả, trễ lâu nhất trước
 
 
 @router.get("/summary", response_model=SummaryOut)
@@ -57,7 +64,10 @@ def summary(settings: Annotated[Settings, Depends(get_settings)],
     ref = parse_sheet_url(sheet) if "/" in sheet else SheetRef(sheet)
     reader = GoogleSheetsReader.from_access_token(token)
     s = summarize(reader.read(ref, sheet_name=f"FB-{y}"), reader.read(ref, sheet_name=DATA_BRAND_TAB),
-                  month=month or None, pic=pic or None)
+                  month=month or None, pic=pic or None, today=datetime.now(ZoneInfo(settings.timezone)).date())
     return SummaryOut(year=y, total=BucketOut.of(s.total),
                       months=[MonthOut(month=m, **BucketOut.of(b).model_dump()) for m, b in s.by_month.items()],
-                      month_options=s.months, pic_options=s.pics)
+                      month_options=s.months, pic_options=s.pics,
+                      overdue=sorted((LateOut(brand=b, amount=x.amount, days_late=x.days)
+                                      for b, x in s.overdue.items()),
+                                     key=lambda x: (-x.days_late, -x.amount)))

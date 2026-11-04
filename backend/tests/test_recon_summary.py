@@ -1,4 +1,5 @@
 """Tab Tổng quan (chốt 04/11/2026): đã thu / pending / estimate / cancel trung bình. Dữ liệu giả."""
+from datetime import date
 from decimal import Decimal
 
 from app.recon.summary import summarize
@@ -27,3 +28,12 @@ def test_summary_buckets():
 def test_summary_route_registered():
     from app.api.v1.summary import router
     assert [r.path for r in router.routes] == ["/api/v1/summary"]
+
+
+def test_overdue_by_brand():
+    late = row("ALPHA", "MIX - 08/2026", "", "EZS", nmv=800, k=160, gmv=1000, status="Đã xuất hóa đơn + Chờ tiền")
+    late[19] = "HĐ: 101 (01/10/2026)"          # hạn = 01/10 + 10 ngày làm việc = 15/10
+    paid = row("BETA", "MIX - 08/2026", "", "EZS", nmv=800, k=99, gmv=1000, status="Done trả tiền")
+    paid[19] = "HĐ: 102 (01/10/2026)"
+    s = summarize(sheet(late, paid), DATA_BRAND, today=date(2026, 10, 25))
+    assert {b: (x.amount, x.days) for b, x in s.overdue.items()} == {"ALPHA": (Decimal(160), 10)}
