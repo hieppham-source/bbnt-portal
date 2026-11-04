@@ -48,7 +48,7 @@ def entity_of(text: Any) -> str:
     return hits.pop() if len(hits) == 1 else normalize_text(text).upper()
 
 
-def _columns(values: Sequence[Sequence[Any]]) -> tuple[int, dict[str, int]]:
+def data_brand_columns(values: Sequence[Sequence[Any]]) -> tuple[int, dict[str, int]]:
     for i, row in enumerate(values[:10]):
         norm = [normalize_text(c) for c in row]
         if "brand" in norm and any(h.startswith("so hop dong") for h in norm):
@@ -66,7 +66,7 @@ def _columns(values: Sequence[Sequence[Any]]) -> tuple[int, dict[str, int]]:
 
 def data_brand_tables(values: Sequence[Sequence[Any]]) -> tuple[list[list[Any]], list[list[Any]]]:
     """Ma trận tab BRAND và HOP_DONG (đúng header của Sheet master) dựng từ DATA BRAND."""
-    h, col = _columns(values)
+    h, col = data_brand_columns(values)
 
     def cell(row: Sequence[Any], key: str) -> Any:
         j = col.get(key)
