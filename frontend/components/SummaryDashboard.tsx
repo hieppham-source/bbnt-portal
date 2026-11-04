@@ -114,17 +114,17 @@ export default function SummaryDashboard() {
 
       <section className="card">
         <div className="card-head">
-          <h2>Brand chậm trả ({data?.overdue.length ?? 0})</h2>
+          <h2>Group brand chậm trả ({data?.overdue.length ?? 0})</h2>
           <span className="hint">Hạn = ngày hoá đơn + 10 ngày làm việc, chưa Done trả tiền</span>
         </div>
         {!data || data.overdue.length === 0 ? (
-          <p className="hint">{busy ? "Đang tải…" : "Không có brand nào quá hạn."}</p>
+          <p className="hint">{busy ? "Đang tải…" : "Không có group brand nào quá hạn."}</p>
         ) : (
           <div className="table-wrap">
             <table className="num-table">
               <thead>
                 <tr>
-                  <th scope="col">Brand</th>
+                  <th scope="col">Group brand</th>
                   <th scope="col">Tổng tiền</th>
                   <th scope="col">Số ngày trễ</th>
                 </tr>
