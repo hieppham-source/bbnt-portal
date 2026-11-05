@@ -11,15 +11,17 @@ import hashlib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
-from app.core.calculation import IssueCode, normalize_text
+from app.core.calculation import IssueCode, MappingConfig, MappingError, locate_header, normalize_text
 from app.errors import BbntError
 from app.master.data_brand import brand_code
+from app.master.index import find_mapping
 from app.master.models import MasterData
 from app.recon.fbjt import brand_key
 from app.recon.rules import campaign_program_name, campaign_suffix
 from app.services.generator import BbntGenerator, BbntInput, BbntResult, OrderOpener
-from app.services.sheets import SheetAccessError
+from app.services.sheets import OrderWorkbook, SheetAccessError
 from app.services.templates import TemplateRegistry
 
 CHANNEL = "FB"
@@ -90,6 +92,49 @@ def _has_pending_status(details: object) -> bool:
                for i in (details if isinstance(details, list) else []))
 
 
+def _with_missed_orders(open_order: OrderOpener, config: MappingConfig) -> OrderOpener | None:
+    """File order có tab ``ORDER`` + các tab ``ĐƠN SÓT...`` (anh Hiệp chốt 05/11/2026: đơn sót cộng chung) ->
+    1 tab ảo ``ORDER`` gồm dòng của tất cả, ghép theo tên cột; dòng đơn sót trùng y hệt 1 dòng đã có thì bỏ (tránh
+    tính 2 lần). File có tab khác ngoài ORDER/ĐƠN SÓT -> None (giữ ORDER_TAB_AMBIGUOUS, người xử lý)."""
+    books = open_order()
+    if len(books) != 1:
+        return None
+    book = books[0]
+    heads = book.heads(book.tabs)
+    tabs = [t for t in book.tabs if _fits(heads.get(t, []), config)]
+    main = [t for t in tabs if normalize_text(t) == "order"]
+    extra = [t for t in tabs if normalize_text(t).startswith("don sot")]
+    if len(main) != 1 or not extra or len(main) + len(extra) != len(tabs):
+        return None
+    rows = [list(r) for r in book.read(main[0])]
+    h, cols = locate_header(rows, config)
+    width = max(cols.values()) + 1
+    seen = {tuple(r[cols[f]] if cols[f] < len(r) else None for f in cols) for r in rows[h:]}
+    for t in extra:
+        rows_t = book.read(t)
+        h_t, cols_t = locate_header(rows_t, config)
+        for r in rows_t[h_t:]:
+            vals = {f: (r[cols_t[f]] if f in cols_t and cols_t[f] < len(r) else None) for f in cols}
+            key = tuple(vals.values())
+            if key in seen or not any(v not in (None, "") for v in key):
+                continue
+            seen.add(key)
+            new: list[Any] = [None] * width
+            for f, j in cols.items():
+                new[j] = vals[f]
+            rows.append(new)
+    merged = OrderWorkbook(book.kind, [main[0]], lambda _t: rows, gid_tab=main[0])
+    return lambda: [merged]
+
+
+def _fits(head: Sequence[Sequence[Any]], config: MappingConfig) -> bool:
+    try:
+        locate_header(head, config)
+        return True
+    except MappingError:
+        return False
+
+
 def make_bbnt(templates: TemplateRegistry, master: MasterData, case: CaseBbnt, open_order: OrderOpener, *,
               issued_at: datetime, render: bool) -> BbntOutcome:
     """Chạy generator; lỗi nghiệp vụ trả về ``reasons`` (không raise) để worker chuyển NEEDS_REVIEW."""
@@ -98,7 +143,8 @@ def make_bbnt(templates: TemplateRegistry, master: MasterData, case: CaseBbnt, o
     except ValueError:
         return BbntOutcome(None, ("CAMPAIGN_FORMAT",))
     try:
-        r = BbntGenerator(templates, clock=lambda: issued_at).run(master, inp, open_order, render=render)
+        opener = _with_missed_orders(open_order, find_mapping(master, CHANNEL).to_config()) or open_order
+        r = BbntGenerator(templates, clock=lambda: issued_at).run(master, inp, opener, render=render)
     except BbntError as exc:
         if exc.code == "NO_DELIVERED_ORDERS" and _has_pending_status(exc.details):
             return BbntOutcome(None, ("STATUS_INCOMPLETE",))   # brand chưa điền status, không phải 0 đơn giao
