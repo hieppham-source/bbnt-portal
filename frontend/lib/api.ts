@@ -312,15 +312,18 @@ export const resumeCase = (t: Tokens, id: string): Promise<unknown> =>
 export type SummaryBucket = {
   collected: string
   pending: string
-  estimate: string
+  estimate: string // nghiệm thu chưa làm: GMV × 22% × 80%
+  eta: string // đã thu + pending + nghiệm thu chưa làm
   cancel_rate: string | null
+  gmv: string
   rows: number
-  no_rate: number
+  last_month: Partial<Record<"collected" | "pending" | "eta", string>>
 }
 export type SummaryOut = {
   year: number
   total: SummaryBucket
   months: (SummaryBucket & { month: string })[]
+  groups: (SummaryBucket & { group: string })[]
   month_options: string[]
   pic_options: string[]
   overdue: { brand: string; amount: string; days_late: number }[]

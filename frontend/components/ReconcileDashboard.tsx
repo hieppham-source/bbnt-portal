@@ -23,6 +23,7 @@ import {
   resumeCase,
 } from "@/lib/api"
 import { vnd } from "@/lib/format"
+import { reasonVi } from "@/lib/reasons"
 
 import { handleAuthError, useIdToken } from "./useIdToken"
 
@@ -299,10 +300,14 @@ export default function ReconcileDashboard() {
                 <td>{c.pic ?? "—"}</td>
                 <td>{STATE_LABEL[c.state] ?? c.state}</td>
                 <td>
-                  {c.state === "ON_HOLD" ? c.hold_reason : c.reasons.join(", ")}
+                  {c.state === "ON_HOLD" ? c.hold_reason : (
+                    <ul className="reasons">
+                      {c.reasons.map((r) => <li key={r} title={r}>{reasonVi(r)}</li>)}
+                    </ul>
+                  )}
                   {c.bbnt_number && <div className="muted">{c.bbnt_number}</div>}
                   {c.email_reasons.length > 0 && c.state !== "ACCEPTANCE_SENT" && (
-                    <div className="muted">Email chưa gửi: {c.email_reasons.join(", ")}</div>
+                    <div className="muted">Email chưa gửi: {c.email_reasons.map(reasonVi).join("; ")}</div>
                   )}
                   {c.loopmail_candidates && (
                     <div>
