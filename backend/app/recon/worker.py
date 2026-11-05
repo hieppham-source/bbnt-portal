@@ -485,11 +485,13 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
             if write_ok:
                 write_back(conn, lambda ws: write_cells(s, fbjt_id, tab, ws),
                            {k: outcome.columns.letter(k) for k in WRITABLE}, now=now, run_id=run_id, st=st)
-            send_status_requests(conn, plans, lambda p: status_mail_for(p, by_row, live.brand_emails),
-                                 GmailApi(s), mail, now=now, run_id=run_id, st=st)
+            # Email 2 (nghiệm thu) trước Email 1 — chung giới hạn RECON_EMAIL_MAX/lần chạy, không để nhắc status
+            # (có thể vài chục nhóm) chiếm hết lượt của thư nghiệm thu
             send_acceptance_emails(conn, plans,
                                    lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
                                    GmailApi(s), mail, now=now, run_id=run_id, st=st)
+            send_status_requests(conn, plans, lambda p: status_mail_for(p, by_row, live.brand_emails),
+                                 GmailApi(s), mail, now=now, run_id=run_id, st=st)
             run_followups(conn, outcome.rows, outcome.done, tab, live.brand_emails, GmailApi(s), mail, now=now,
                           run_id=run_id, st=st)
             if write_ok:          # U: chỉ tiến lên, tối đa "Đã done BBNT + Chờ KT xuất HĐ nháp"
