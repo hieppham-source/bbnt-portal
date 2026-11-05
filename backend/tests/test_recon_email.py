@@ -172,3 +172,13 @@ def test_status_mails_tell_brand_which_column_to_fill() -> None:
     m = StatusMail("SVR", ["SVR"], "EZS", "", "SVR - 09/2026", "https://link", None, ["kt@brand.vn"])
     for text in (status_request_text(m, "05/11/2026", "Hiệp"), status_reminder_text(m, "05/11/2026", "Hiệp")):
         assert f'cột "{STATUS_COLUMN}"' in text and "Mã vận đơn" in text
+
+
+def test_mails_say_ezs_not_hannah() -> None:
+    """Anh Hiệp chốt 05/11/2026: thư gửi brand xưng EZS, không nhắc Hannah Olala."""
+    import inspect
+
+    from app.recon import emailer, followup
+    for mod in (emailer, followup):
+        src = "\n".join(line for line in inspect.getsource(mod).splitlines() if '"' in line and '"""' not in line)
+        assert "Hannah" not in src, mod.__name__
