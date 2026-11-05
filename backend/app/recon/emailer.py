@@ -167,15 +167,15 @@ def acceptance_text(m: BbntMail, due: str, signer: str) -> str:
     table = [head] + [" | ".join(x for x in r if x) for r in m.rows()]
     return "\n".join([
         f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
-        f"Cảm ơn anh/chị đã cập nhật status đơn hàng. Hannah gửi anh/chị số liệu nghiệm thu campaign "
+        f"Cảm ơn anh/chị đã cập nhật status đơn hàng. EZS gửi anh/chị số liệu nghiệm thu campaign "
         f"{name} {month} như sau:".replace("  ", " "), "", *table, "",
         "Đính kèm là biên bản nghiệm thu tương ứng. Nhờ anh/chị:",
         "1. Kiểm tra và xác nhận số liệu trên bằng cách reply mail này;",
-        "2. Ký, đóng dấu biên bản nghiệm thu và gửi lại bản scan cho Hannah,",
+        "2. Ký, đóng dấu biên bản nghiệm thu và gửi lại bản scan cho EZS,",
         f"trước ngày {due}. Nếu có chênh lệch số liệu, anh/chị phản hồi chi tiết đơn hàng trong cùng thời hạn "
         "để hai bên đối chiếu.",
-        "Sau khi nhận được xác nhận, Hannah sẽ gửi hóa đơn nháp để anh/chị kiểm tra.", "",
-        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)", "Hannah Olala"])
+        "Sau khi nhận được xác nhận, EZS sẽ gửi hóa đơn nháp để anh/chị kiểm tra.", "",
+        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)", "EZS"])
 
 
 def acceptance_html(m: BbntMail, due: str, signer: str) -> str:
@@ -190,17 +190,17 @@ def acceptance_html(m: BbntMail, due: str, signer: str) -> str:
     camp = e(f"{name} {month}".strip())
     return (
         f"<p>Kính gửi anh/chị team {e(', '.join(m.brands))},</p>"
-        f"<p>Cảm ơn anh/chị đã cập nhật status đơn hàng. Hannah gửi anh/chị số liệu nghiệm thu campaign "
+        f"<p>Cảm ơn anh/chị đã cập nhật status đơn hàng. EZS gửi anh/chị số liệu nghiệm thu campaign "
         f"<b>{camp}</b> như sau:</p>"
         f'<table style="border-collapse:collapse"><tr><th {td}>{e(", ".join(m.brands))} {camp}</th><th {td}></th>'
         f"<th {td}>Thành tiền</th><th {td}>Ghi chú</th></tr>{rows}</table>"
         "<p>Đính kèm là <b>biên bản nghiệm thu</b> tương ứng. Nhờ anh/chị:</p><ol>"
         "<li>Kiểm tra và <b>xác nhận số liệu</b> trên bằng cách reply mail này;</li>"
-        "<li><b>Ký, đóng dấu biên bản nghiệm thu</b> và gửi lại bản scan cho Hannah,</li></ol>"
+        "<li><b>Ký, đóng dấu biên bản nghiệm thu</b> và gửi lại bản scan cho EZS,</li></ol>"
         f"<p>trước ngày <b>{e(due)}</b>. Nếu có chênh lệch số liệu, anh/chị phản hồi chi tiết đơn hàng trong cùng "
         "thời hạn để hai bên đối chiếu.</p>"
-        "<p>Sau khi nhận được xác nhận, Hannah sẽ gửi hóa đơn nháp để anh/chị kiểm tra.</p>"
-        f"<p>Trân trọng,<br>{e(signer)}<br>Hannah Olala</p>")
+        "<p>Sau khi nhận được xác nhận, EZS sẽ gửi hóa đơn nháp để anh/chị kiểm tra.</p>"
+        f"<p>Trân trọng,<br>{e(signer)}<br>EZS</p>")
 
 
 def body(m: BbntMail) -> str:
@@ -355,21 +355,21 @@ def status_request_text(m: StatusMail, due: str, signer: str) -> str:
     when = f" (từ {m.period[0]:%d/%m/%Y} đến {m.period[1]:%d/%m/%Y})" if m.period else ""
     return "\n".join([
         f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
-        f"Hannah Olala xin gửi anh/chị danh sách đơn hàng của campaign {_camp(m.campaign)}{when} để phục vụ đối soát "
+        f"EZS xin gửi anh/chị danh sách đơn hàng của campaign {_camp(m.campaign)}{when} để phục vụ đối soát "
         "và nghiệm thu.", "", f"Link order: {m.link}", "",
         "Nhờ anh/chị cập nhật status giao hàng cho từng đơn (Giao thành công / Hoàn / Hủy) vào file trên trước ngày "
         f"{due}.", STATUS_COLUMN_NOTE,
-        "Sau khi brand cập nhật xong, Hannah sẽ tổng hợp số liệu và gửi bảng confirm số cùng biên bản nghiệm thu trong "
+        "Sau khi brand cập nhật xong, EZS sẽ tổng hợp số liệu và gửi bảng confirm số cùng biên bản nghiệm thu trong "
         "luồng mail này.",
-        "Nếu có đơn chưa rõ trạng thái hoặc cần hỗ trợ, anh/chị phản hồi ngay trong mail này giúp Hannah nhé.", "",
-        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)", "Hannah Olala"])
+        "Nếu có đơn chưa rõ trạng thái hoặc cần hỗ trợ, anh/chị phản hồi ngay trong mail này giúp EZS nhé.", "",
+        "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)", "EZS"])
 
 
 def status_reminder_text(m: StatusMail, due: str, signer: str) -> str:
     """EMAIL 1 — bản nhắc lại (quá hạn chưa cập nhật, reply vào luồng)."""
     return "\n".join([
         f"Kính gửi anh/chị team {', '.join(m.brands)},", "",
-        f"Hannah xin nhắc lại: file order campaign {_camp(m.campaign)} hiện vẫn chưa được cập nhật đầy đủ status "
+        f"EZS xin nhắc lại: file order campaign {_camp(m.campaign)} hiện vẫn chưa được cập nhật đầy đủ status "
         f"({m.link}). Anh/chị vui lòng hoàn tất trước ngày {due} để hai bên kịp chốt số nghiệm thu.",
         STATUS_COLUMN_NOTE, "",
         "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)"])

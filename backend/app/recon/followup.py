@@ -163,9 +163,9 @@ def confirm_bbnt_text(fc: FollowCase, due: str, signer: str) -> str:
     """EMAIL 3A — nhắc confirm biên bản nghiệm thu."""
     return "\n".join([
         f"Kính gửi anh/chị team {', '.join(fc.brands)},", "",
-        f"Hannah xin nhắc lại: biên bản nghiệm thu campaign {fc.camp()} (tổng số tiền {_vnd(fc.k_total)} VNĐ) đã gửi "
+        f"EZS xin nhắc lại: biên bản nghiệm thu campaign {fc.camp()} (tổng số tiền {_vnd(fc.k_total)} VNĐ) đã gửi "
         "ở mail trước hiện chưa nhận được xác nhận.",
-        f"Anh/chị vui lòng kiểm tra, ký và gửi lại biên bản trước ngày {due} để Hannah kịp xuất hóa đơn theo đúng kỳ.",
+        f"Anh/chị vui lòng kiểm tra, ký và gửi lại biên bản trước ngày {due} để EZS kịp xuất hóa đơn theo đúng kỳ.",
         "", "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)"])
 
 
@@ -173,8 +173,8 @@ def invoice_draft_text(fc: FollowCase, due: str, signer: str) -> str:
     """EMAIL 3B — bản nhắc lại (kế toán đã gửi HĐ nháp)."""
     return "\n".join([
         f"Kính gửi anh/chị team {', '.join(fc.brands)},", "",
-        f"Hannah xin nhắc anh/chị xác nhận hóa đơn nháp campaign {fc.camp()} đã gửi ở mail trên. Vui lòng phản hồi "
-        f"trước ngày {due} để Hannah xuất hóa đơn chính thức.", "",
+        f"EZS xin nhắc anh/chị xác nhận hóa đơn nháp campaign {fc.camp()} đã gửi ở mail trên. Vui lòng phản hồi "
+        f"trước ngày {due} để EZS xuất hóa đơn chính thức.", "",
         "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)"])
 
 
@@ -202,24 +202,24 @@ def payment_text(fc: FollowCase, invoices: Sequence[InvoiceDue], today: date, si
     head = [f"Kính gửi anh/chị team {', '.join(fc.brands)},", ""]
     tail = ["", "Trân trọng,", signer or "(chưa cấu hình RECON_EMAIL_SIGNER)"]
     if not late:
-        lines = [f"Hannah xin thông tin khoản thanh toán campaign {fc.camp()} đã đến hạn:", ""]
+        lines = [f"EZS xin thông tin khoản thanh toán campaign {fc.camp()} đã đến hạn:", ""]
         for i in invoices:
             lines += [f"Số hóa đơn: {i.number}", f"Ngày xuất hóa đơn: {i.issued_on:%d/%m/%Y}",
                       f"Số tiền cần thanh toán: {_vnd(i.amount)} VNĐ", f"Hạn thanh toán: {i.due:%d/%m/%Y}", ""]
-        lines += ["Nhờ anh/chị sắp xếp thanh toán và phản hồi giúp Hannah lịch thanh toán dự kiến. Nếu đã chuyển "
-                  "khoản, anh/chị vui lòng gửi ủy nhiệm chi để Hannah đối chiếu."]
+        lines += ["Nhờ anh/chị sắp xếp thanh toán và phản hồi giúp EZS lịch thanh toán dự kiến. Nếu đã chuyển "
+                  "khoản, anh/chị vui lòng gửi ủy nhiệm chi để EZS đối chiếu."]
         return "\n".join(head + lines + tail)
     lines = []
     for i in invoices:
         n = days_late(i.due, today)
         lines.append(f"Hóa đơn số {i.number} (ngày {i.issued_on:%d/%m/%Y}) campaign {fc.camp()}, số tiền "
-                     f"{_vnd(i.amount)} VNĐ, " + (f"đã quá hạn {n} ngày (hạn {i.due:%d/%m/%Y}) và Hannah vẫn chưa nhận "
+                     f"{_vnd(i.amount)} VNĐ, " + (f"đã quá hạn {n} ngày (hạn {i.due:%d/%m/%Y}) và EZS vẫn chưa nhận "
                                                   "được thanh toán." if n else f"đến hạn ngày {i.due:%d/%m/%Y}."))
         if n:
             lines.append(f"Phạt chậm thanh toán ước tính theo điều khoản hợp đồng (0,05%/ngày × {n} ngày): "
                          f"{_vnd(late_fee(i.amount, n))} VNĐ.")
     lines += ["", "Anh/chị vui lòng thanh toán hoặc phản hồi lịch thanh toán cụ thể trong thời gian sớm nhất. Nếu có "
-              "vướng mắc về hóa đơn/chứng từ, anh/chị báo trong mail này để Hannah hỗ trợ xử lý ngay."]
+              "vướng mắc về hóa đơn/chứng từ, anh/chị báo trong mail này để EZS hỗ trợ xử lý ngay."]
     return "\n".join(head + lines + tail)
 
 
