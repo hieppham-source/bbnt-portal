@@ -38,3 +38,10 @@ def test_overdue_by_group_brand():
     paid[19] = "HĐ: 102 (01/10/2026)"
     s = summarize(sheet(late, paid), DATA_BRAND, today=date(2026, 10, 25))
     assert {b: (x.amount, x.days) for b, x in s.overdue.items()} == {"GRP": (Decimal(160), 10)}   # theo GROUP BRAND
+
+
+def test_fbjt_date_month_first_only_when_unambiguous():
+    from app.recon.fbjt import parse_date
+    assert parse_date("7/30/2026") == date(2026, 7, 30)       # 30 không thể là tháng -> tháng/ngày
+    assert parse_date("7/8/2026") == date(2026, 8, 7)         # mơ hồ -> giữ ngày/tháng
+    assert parse_date("30/07/2026") == date(2026, 7, 30)
