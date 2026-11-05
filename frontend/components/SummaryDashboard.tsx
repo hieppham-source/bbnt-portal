@@ -9,13 +9,76 @@ import { handleAuthError, useIdToken } from "./useIdToken"
 
 const YEAR = new Date().getFullYear()
 
-function Kpi({ label, value, note, tone }: { label: string; value: string; note: string; tone: string }) {
+type Drill = "collected" | "pending" | "eta" | "cancel"
+
+function Kpi({ label, value, note, tone, open, onClick }: {
+  label: string; value: string; note: string; tone: Drill; open: boolean; onClick: () => void
+}) {
   return (
-    <div className={`kpi ${tone}`}>
+    <button type="button" className={`kpi ${tone}${open ? " open" : ""}`} onClick={onClick} aria-expanded={open}
+            aria-controls="drill">
       <span className="kpi-label">{label}</span>
       <span className="kpi-value">{value}</span>
       <span className="kpi-note">{note}</span>
-    </div>
+      <span className="kpi-more">{open ? "Ẩn chi tiết" : "Xem theo group brand"}</span>
+    </button>
+  )
+}
+
+const DRILL_TITLE: Record<Drill, string> = {
+  collected: "Đã thu tiền theo group brand",
+  pending: "Còn pending theo group brand",
+  eta: "Commission ETA cả năm theo group brand",
+  cancel: "Group brand cancel cao nhất",
+}
+const MONTH_HEAD: Record<Exclude<Drill, "cancel">, string> = {
+  collected: "Tháng thu tiền tới hiện tại",
+  pending: "Tháng pending gần nhất",
+  eta: "Tới tháng",
+}
+
+function DrillTable({ kind, data }: { kind: Drill; data: SummaryOut }) {
+  if (kind === "cancel") {
+    const rows = data.groups.filter((g) => g.cancel_rate !== null)
+      .sort((a, b) => Number(b.cancel_rate) - Number(a.cancel_rate))
+    return (
+      <table className="num-table">
+        <thead><tr><th scope="col">Group brand</th><th scope="col">Cancel</th><th scope="col">GMV đã chốt</th></tr></thead>
+        <tbody>
+          {rows.map((g) => (
+            <tr key={g.group}>
+              <th scope="row">{g.group}</th>
+              <td className={Number(g.cancel_rate) > 0.2 ? "late-bad" : undefined}>{pct(g.cancel_rate)}</td>
+              <td>{vnd(g.gmv)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+  }
+  const total = Number(data.total[kind])
+  const rows = data.groups.filter((g) => Number(g[kind]) > 0).sort((a, b) => Number(b[kind]) - Number(a[kind]))
+  return (
+    <table className="num-table">
+      <thead>
+        <tr>
+          <th scope="col">Group brand</th>
+          <th scope="col">{MONTH_HEAD[kind]}</th>
+          <th scope="col">CMS</th>
+          <th scope="col">% trên tổng CMS</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((g) => (
+          <tr key={g.group}>
+            <th scope="row">{g.group}</th>
+            <td>{g.last_month[kind] ? `Tháng ${g.last_month[kind]}` : "—"}</td>
+            <td>{vnd(g[kind])}</td>
+            <td>{total ? pct(Number(g[kind]) / total) : "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -38,6 +101,8 @@ export default function SummaryDashboard() {
   const [data, setData] = useState<SummaryOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [drill, setDrill] = useState<Drill | null>(null)
+  const toggle = (d: Drill) => () => setDrill((cur) => (cur === d ? null : d))
 
   const load = useCallback(async () => {
     if (!token) return
@@ -103,14 +168,25 @@ export default function SummaryDashboard() {
 
       <section className="kpis" aria-busy={busy}>
         <Kpi tone="collected" label="Đã thu tiền" value={t ? vnd(t.collected) : "—"}
-             note="Hoa hồng (cột K) các dòng Done trả tiền" />
+             note="Hoa hồng (cột K) các dòng Done trả tiền" open={drill === "collected"} onClick={toggle("collected")} />
         <Kpi tone="pending" label="Còn pending" value={t ? vnd(t.pending) : "—"}
-             note="Đã có hoa hồng K, chưa Done" />
-        <Kpi tone="estimate" label="Commission estimate" value={t ? vnd(t.estimate) : "—"}
-             note={t && t.no_rate ? `GMV × % HĐ · ${t.no_rate} dòng thiếu % HĐ` : "GMV × % hoa hồng theo HĐ (chưa VAT)"} />
+             note="Đã có hoa hồng K, chưa Done" open={drill === "pending"} onClick={toggle("pending")} />
+        <Kpi tone="eta" label="Commission ETA cả năm" value={t ? vnd(t.eta) : "—"}
+             note={t ? `Đã thu + pending + chưa nghiệm thu ${vnd(t.estimate)} (GMV × 22% × 80%)` : "—"}
+             open={drill === "eta"} onClick={toggle("eta")} />
         <Kpi tone="cancel" label="Cancel trung bình" value={t ? pct(t.cancel_rate) : "—"}
-             note="1 − NMV / GMV, theo trọng số GMV" />
+             note="1 − NMV / GMV, theo trọng số GMV" open={drill === "cancel"} onClick={toggle("cancel")} />
       </section>
+
+      {drill && data && (
+        <section className="card" id="drill" aria-live="polite">
+          <div className="card-head">
+            <h2>{DRILL_TITLE[drill]}</h2>
+            <button type="button" className="btn-ghost" onClick={() => setDrill(null)}>Đóng</button>
+          </div>
+          <div className="table-wrap"><DrillTable kind={drill} data={data} /></div>
+        </section>
+      )}
 
       <section className="card">
         <div className="card-head">
@@ -149,7 +225,7 @@ export default function SummaryDashboard() {
           <div className="legend" aria-hidden="true">
             <span><i className="dot collected" />Đã thu</span>
             <span><i className="dot pending" />Pending</span>
-            <span><i className="dot estimate" />Estimate</span>
+            <span><i className="dot estimate" />Chưa nghiệm thu</span>
           </div>
         </div>
         {!data || data.months.length === 0 ? (
@@ -162,7 +238,7 @@ export default function SummaryDashboard() {
                   <th scope="col">Tháng</th>
                   <th scope="col">Đã thu</th>
                   <th scope="col">Pending</th>
-                  <th scope="col">Estimate</th>
+                  <th scope="col">Chưa nghiệm thu</th>
                   <th scope="col">Cancel</th>
                   <th scope="col">Dòng</th>
                   <th scope="col" className="bar-col">Tỷ trọng</th>

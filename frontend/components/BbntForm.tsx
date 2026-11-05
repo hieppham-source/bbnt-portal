@@ -18,6 +18,7 @@ import {
 } from "@/lib/api"
 import { pct, vnd, vnDate } from "@/lib/format"
 
+import BrandPicker from "./BrandPicker"
 import { handleAuthError, reconsent, useIdToken } from "./useIdToken"
 
 /** Xem trước "đuôi biên bản nghiệm thu" người dùng gõ sẽ ráp vào số BBNT — portal GIỮ NGUYÊN 100% như đã gõ
@@ -443,21 +444,7 @@ export default function BbntForm() {
           </div>
           {mode === "brand" ? (
             <div className="checks">
-              {brandsInChannel.length === 0 && <span className="muted">Kênh này chưa có brand trong tab BRAND</span>}
-              {brandsInChannel.map((b) => (
-                <label key={b.code} className="check">
-                  <input
-                    type="checkbox"
-                    checked={brandCodes.includes(b.code)}
-                    onChange={(e) =>
-                      touch(setBrandCodes)(
-                        e.target.checked ? [...brandCodes, b.code] : brandCodes.filter((c) => c !== b.code),
-                      )
-                    }
-                  />
-                  {b.name} <span className="muted">{b.code}{b.group_code ? ` · ${b.group_code}` : ""}</span>
-                </label>
-              ))}
+              <BrandPicker brands={brandsInChannel} value={brandCodes} onChange={touch(setBrandCodes)} />
               {selectedBrands.length > 1 && !mixedGroups && (
                 <p className="hint">Gộp {selectedBrands.length} brand → số BBNT dùng mã group {selectedBrands[0].group_code}.</p>
               )}

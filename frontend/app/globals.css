@@ -81,11 +81,15 @@ code { font-family: var(--mono); font-size: 0.88em; }
 .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); border-top: 3px solid var(--kpi, var(--accent)); }
 .kpi.collected { --kpi: var(--c-collected); }
 .kpi.pending { --kpi: var(--c-pending); }
-.kpi.estimate { --kpi: var(--c-estimate); }
+.kpi.eta { --kpi: var(--c-estimate); }
 .kpi.cancel { --kpi: var(--c-cancel); }
 .kpi-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .kpi-value { font-family: var(--mono); font-size: 1.6rem; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .kpi-note { font-size: 0.82rem; color: var(--muted); }
+button.kpi { font: inherit; text-align: left; color: var(--text); cursor: pointer; min-height: 0; transition: border-color 0.15s, box-shadow 0.15s; }
+button.kpi:hover:not(:disabled) { background: var(--card); box-shadow: 0 2px 8px rgb(15 23 42 / 10%); }
+button.kpi.open { outline: 2px solid var(--kpi); outline-offset: -1px; }
+.kpi-more { font-size: 0.8rem; font-weight: 600; color: var(--accent); }
 
 .table-wrap { overflow-x: auto; }
 table.num-table td, table.num-table tfoot th { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -181,3 +185,8 @@ table.breakdown td:nth-child(n + 2), table.breakdown th:nth-child(n + 2) { text-
 .login .primary { width: 100%; padding: 12px; }
 .email-preview { border-top: 1px solid var(--line); padding: 8px 0; }
 .email-preview pre { white-space: pre-wrap; font: inherit; background: rgba(127,127,127,.08); padding: 8px; border-radius: 6px; }
+ul.reasons { margin: 0; padding-left: 16px; }
+.picker { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.picker-list { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin: 4px 0 0; padding: 4px; list-style: none; max-height: 280px; overflow-y: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgb(15 23 42 / 12%); }
+.picker-list li { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.picker-list li.hi { background: var(--accent-soft); }
