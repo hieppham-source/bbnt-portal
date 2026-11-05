@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.core.calculation import IssueCode, MappingConfig, MappingError, locate_header, normalize_text
+from app.core.calculation import IssueCode, MappingConfig, MappingError, TargetField, locate_header, normalize_text
 from app.errors import BbntError
 from app.master.data_brand import brand_code
 from app.master.index import find_mapping
@@ -95,7 +95,8 @@ def _has_pending_status(details: object) -> bool:
 def _with_missed_orders(open_order: OrderOpener, config: MappingConfig) -> OrderOpener | None:
     """File order có tab ``ORDER`` + các tab ``ĐƠN SÓT...`` (anh Hiệp chốt 05/11/2026: đơn sót cộng chung) ->
     1 tab ảo ``ORDER`` gồm dòng của tất cả, ghép theo tên cột; dòng đơn sót trùng y hệt 1 dòng đã có thì bỏ (tránh
-    tính 2 lần). File có tab khác ngoài ORDER/ĐƠN SÓT -> None (giữ ORDER_TAB_AMBIGUOUS, người xử lý)."""
+    tính 2 lần); cột Hãng trống ở tab đơn sót -> lấy brand duy nhất của tab ORDER (không thì bị lọc mất).
+    File có tab khác ngoài ORDER/ĐƠN SÓT -> None (giữ ORDER_TAB_AMBIGUOUS, người xử lý)."""
     books = open_order()
     if len(books) != 1:
         return None
@@ -110,11 +111,16 @@ def _with_missed_orders(open_order: OrderOpener, config: MappingConfig) -> Order
     h, cols = locate_header(rows, config)
     width = max(cols.values()) + 1
     seen = {tuple(r[cols[f]] if cols[f] < len(r) else None for f in cols) for r in rows[h:]}
+    b = cols.get(TargetField.BRAND_NAME)
+    brands = {normalize_text(r[b]): r[b] for r in rows[h:] if b is not None and b < len(r) and normalize_text(r[b])}
+    only_brand = next(iter(brands.values())) if len(brands) == 1 else None   # tab đơn sót hay để trống cột Hãng
     for t in extra:
         rows_t = book.read(t)
         h_t, cols_t = locate_header(rows_t, config)
         for r in rows_t[h_t:]:
             vals = {f: (r[cols_t[f]] if f in cols_t and cols_t[f] < len(r) else None) for f in cols}
+            if b is not None and only_brand and not str(vals[TargetField.BRAND_NAME] or "").strip():
+                vals[TargetField.BRAND_NAME] = only_brand
             key = tuple(vals.values())
             if key in seen or not any(v not in (None, "") for v in key):
                 continue
