@@ -359,3 +359,33 @@ def test_google_reader_retries_rate_limits() -> None:
 
     retry = GoogleSheetsReader("tok")._session.get_adapter("https://sheets.googleapis.com").max_retries
     assert 429 in retry.status_forcelist and retry.total >= 3
+
+
+def test_missed_order_tabs_are_added_to_order_tab(master_tables):
+    """Anh Hiệp chốt 05/11/2026: tab 'ĐƠN SÓT...' cộng chung với tab ORDER; dòng trùng y hệt không tính 2 lần."""
+    from app.services.sheets import OrderWorkbook
+
+    from .conftest import ORDER_HEADER
+
+    missed = [["ĐƠN SÓT"], ORDER_HEADER,
+              ["25/05/2026", "FB009", "Đã giao", "Organica", "ORG-01", "Serum Organica", 1, 400_000],
+              list(ORGANICA_MAY[2])]                          # trùng y hệt FB001 -> bỏ
+    tabs = {"ORDER": ORGANICA_MAY, "ĐƠN SÓT UPDATE 23/9": missed}
+    master = MasterRepository(lambda: master_tables, ttl_seconds=60).get()
+
+    def opener(url):
+        return lambda: [OrderWorkbook("google_sheet", list(tabs), lambda t: tabs[t])]
+
+    def plan(t):
+        nonlocal tabs
+        tabs = t
+        [p] = plan_cases(sheet(row("ORGANICA", "BDAY - 05/2026", "31/05/2026", "EZS")), LINKS, CONTRACTS, master,
+                         TemplateRegistry(DEFAULT_TEMPLATES_DIR), opener, today=TODAY, now=NOW,
+                         scope_from=date(2026, 1, 1), require_revenue=False)
+        return p
+    base = {c.column: c.target for c in plan({"ORDER": ORGANICA_MAY}).cells}
+    p = plan({"ORDER": ORGANICA_MAY, "ĐƠN SÓT UPDATE 23/9": missed})
+    assert p.action is Action.DRAFT
+    assert {c.column: c.target for c in p.cells}["nmv"] == base["nmv"] + 400_000
+    other = plan({"ORDER": ORGANICA_MAY, "ĐƠN SÓT": missed, "PIVOT": ORGANICA_MAY})   # có tab lạ -> không tự gộp
+    assert {c.column: c.target for c in other.cells}.get("nmv") != base["nmv"] + 400_000
