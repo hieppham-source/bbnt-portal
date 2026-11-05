@@ -137,7 +137,17 @@ def parse_date(v: Any) -> date | None:
             return datetime.strptime(v.strip(), "%d/%m/%y").date()
         except ValueError:
             pass
-    dt = parse_order_datetime(v)
+    try:
+        dt = parse_order_datetime(v)
+    except ValueError:
+        # '7/30/2026': chỉ đọc tháng/ngày khi cách đọc ngày/tháng không hợp lệ (ngày mơ hồ như 7/8 vẫn là 7 tháng 8)
+        if isinstance(v, str):
+            for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+                try:
+                    return datetime.strptime(v.strip(), fmt).date()
+                except ValueError:
+                    pass
+        raise
     return dt.date() if dt else None
 
 
