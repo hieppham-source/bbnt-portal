@@ -560,4 +560,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # `python -m app.recon.worker` chạy file này dưới tên __main__, còn runner import app.recon.worker -> 2 bản class
+    # Action khác nhau, `p.action is Action.DRAFT` trong runner luôn sai (case DRAFT không lưu số BBNT, không ghi
+    # I/K, không gửi Email 2). Chạy main() của đúng module đã import để chỉ có 1 bản.
+    from app.recon.worker import main as _main
+    sys.exit(_main())

@@ -390,3 +390,15 @@ def test_missed_order_tabs_are_added_to_order_tab(master_tables):
     assert {c.column: c.target for c in p.cells}["nmv"] == base["nmv"] + 400_000
     other = plan({"ORDER": order, "ĐƠN SÓT": missed, "PIVOT": order})   # có tab lạ -> không tự gộp
     assert {c.column: c.target for c in other.cells}.get("nmv") != base["nmv"] + 400_000
+
+
+def test_module_entry_runs_imported_module_not_a_second_copy(monkeypatch):
+    """Lỗi 05/11/2026: chạy `python -m app.recon.worker` tạo bản class Action thứ 2 -> runner không nhận DRAFT."""
+    import runpy
+
+    import app.recon.worker as w
+    called = []
+    monkeypatch.setattr(w, "main", lambda: called.append(True) or 0)
+    with pytest.raises(SystemExit) as e:
+        runpy.run_module("app.recon.worker", run_name="__main__")
+    assert called == [True] and e.value.code == 0
