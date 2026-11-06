@@ -19,6 +19,8 @@ def test_summary_buckets_and_groups():
         at("10", row("ALPHA", "MIX - 10/2026", "", "EZS", group="G1", nmv=800, k=160, gmv=1000,
                      status="Đã xuất hóa đơn + Chờ tiền")),                                    # pending
         at("11", row("BETA", "MIX - 11/2026", "", "EZS", gmv=500)),          # chưa nghiệm thu: 500 × 22% × 80%
+        at("11", row("GAMMA", "MIX - 11/2026", "", "EZS", op="OP", nmv=1, k=999, gmv=5000,
+                     status="Done trả tiền")),                                                 # OP -> không tính
     )
     s = summarize(values)
     t = s.total
@@ -27,6 +29,7 @@ def test_summary_buckets_and_groups():
     assert s.by_group["G1"].last == {"collected": "9", "pending": "10", "eta": "10"}
     assert s.by_group["BETA"].estimate == Decimal(88)              # group trống -> brand
     assert summarize(values, pic="nobody").total.rows == 0
+    assert "GAMMA" not in s.by_group and t.rows == 3
 
 
 def test_summary_route_registered():

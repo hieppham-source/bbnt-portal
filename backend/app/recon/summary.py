@@ -5,6 +5,7 @@
 * Nghiệm thu chưa làm (dòng có GMV, chưa có K) = GMV × 22% × 80%.
 * Commission ETA cả năm = Đã thu + Pending + Nghiệm thu chưa làm.
 * Cancel = 1 − ΣNMV / ΣGMV trên các dòng có cả NMV và GMV (= bình quân cột J theo trọng số GMV).
+* Chỉ tính dòng cột H = NON OP (anh Hiệp chốt 06/11/2026); dòng OP bỏ khỏi toàn bộ tab.
 """
 from __future__ import annotations
 
@@ -96,7 +97,7 @@ def summarize(values: Sequence[Sequence[Any]], *, month: str | None = None,
     # shortcut: lịch mặc định chỉ có lễ dương lịch cố định (không đọc bảng holiday đã duyệt) — sai 1–2 ngày quanh Tết
     today, cal = today or date.today(), cal or BusinessCalendar()
     parsed = parse_rows(values)
-    rows = [(r, False) for r in parsed.rows] + [(r, True) for r in parsed.done]
+    rows = [(r, d) for rs, d in ((parsed.rows, False), (parsed.done, True)) for r in rs if r.is_non_op]
     out = Summary(months=sorted({r.month for r, _ in rows if r.month}, key=_month_key),
                   pics=sorted({r.pic for r, _ in rows if r.pic}))
     for r, done in sorted(rows, key=lambda x: x[0].row_number):
