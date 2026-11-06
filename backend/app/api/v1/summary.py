@@ -1,7 +1,7 @@
 """GET /api/v1/summary — tab Tổng quan: đọc FB.JT bằng token Google của người xem (chỉ đọc)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -44,10 +44,19 @@ class GroupOut(BucketOut):
     group: str
 
 
+class LateInvoiceOut(BaseModel):
+    invoice: str
+    issued_on: date
+    amount: Decimal
+    days_late: int
+    late_fee: Decimal
+
+
 class LateOut(BaseModel):
     brand: str
     amount: Decimal
     days_late: int
+    invoices: list[LateInvoiceOut]  # từng hoá đơn quá hạn, trễ lâu nhất trước
 
 
 class SummaryOut(BaseModel):
@@ -76,6 +85,11 @@ def summary(settings: Annotated[Settings, Depends(get_settings)],
                       months=[MonthOut(month=m, **BucketOut.of(b).model_dump()) for m, b in s.by_month.items()],
                       groups=[GroupOut(group=g, **BucketOut.of(b).model_dump()) for g, b in s.by_group.items()],
                       month_options=s.months, pic_options=s.pics,
-                      overdue=sorted((LateOut(brand=b, amount=x.amount, days_late=x.days)
+                      overdue=sorted((LateOut(brand=b, amount=x.amount, days_late=x.days,
+                                              invoices=[LateInvoiceOut(invoice=k, issued_on=i.issued_on,
+                                                                       amount=i.amount, days_late=i.days,
+                                                                       late_fee=i.fee)
+                                                        for k, i in sorted(x.invoices.items(),
+                                                                           key=lambda kv: -kv[1].days)])
                                       for b, x in s.overdue.items()),
                                      key=lambda x: (-x.days_late, -x.amount)))

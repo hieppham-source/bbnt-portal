@@ -17,7 +17,7 @@ from typing import Any
 
 from app.core.calculation import normalize_text
 from app.recon.fbjt import FbjtRow, parse_rows
-from app.recon.rules import BusinessCalendar, days_late, parse_invoices, payment_due
+from app.recon.rules import BusinessCalendar, days_late, late_fee, parse_invoices, payment_due
 
 ZERO = Decimal(0)
 ESTIMATE_RATE = Decimal("0.22") * Decimal("0.8")       # nghiệm thu chưa làm: GMV × 22% × 80%
@@ -78,9 +78,22 @@ class Summary:
 
 
 @dataclass
+class LateInvoice:
+    issued_on: date               # ngày HĐ sớm nhất (mốc tính hạn)
+    days: int
+    amount: Decimal = ZERO        # tổng K các dòng ghi HĐ này
+
+    @property
+    def fee(self) -> Decimal:     # lãi phạt chậm tạm tính, tính từ ngày hạn (HĐ + 10 ngày làm việc)
+        return late_fee(self.amount, self.days)
+
+
+@dataclass
 class Late:
     amount: Decimal = ZERO
     days: int = 0                 # số ngày trễ lâu nhất trong group
+    # "HĐ số 1358" -> hoá đơn; dòng ghi nhiều HĐ gộp 1 nhãn "HĐ số 1358, 1377" vì K không tách được theo HĐ
+    invoices: dict[str, LateInvoice] = field(default_factory=dict)
 
 
 def overdue_days(r: FbjtRow, today: date, cal: BusinessCalendar) -> int:
@@ -111,4 +124,8 @@ def summarize(values: Sequence[Sequence[Any]], *, month: str | None = None,
             b = out.overdue.setdefault(r.group or r.brand, Late())
             b.amount += r.commission or ZERO
             b.days = max(b.days, late)
+            inv = parse_invoices(r.invoice_note)
+            label = "HĐ số " + ", ".join(dict.fromkeys(i.number for i in inv))
+            x = b.invoices.setdefault(label, LateInvoice(min(i.issued_on for i in inv), late))
+            x.amount += r.commission or ZERO
     return out

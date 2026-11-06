@@ -326,7 +326,10 @@ export type SummaryOut = {
   groups: (SummaryBucket & { group: string })[]
   month_options: string[]
   pic_options: string[]
-  overdue: { brand: string; amount: string; days_late: number }[]
+  overdue: {
+    brand: string; amount: string; days_late: number
+    invoices: { invoice: string; issued_on: string; amount: string; days_late: number; late_fee: string }[]
+  }[]
 }
 export const getSummary = (t: Tokens, q: { year?: number; month?: string; pic?: string }): Promise<SummaryOut> => {
   const p = new URLSearchParams()
