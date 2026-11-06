@@ -135,7 +135,7 @@ export default function SummaryDashboard() {
       <div className="page-head">
         <div>
           <h1>Tổng quan công nợ</h1>
-          <p className="hint">Số liệu đọc trực tiếp từ FB.JT (tab FB-{year}), % hoa hồng theo hợp đồng trong DATA BRAND.</p>
+          <p className="hint">Số liệu đọc trực tiếp từ FB.JT (tab FB-{year}), chỉ tính brand NON OP (cột H).</p>
         </div>
         <div className="filters">
           <label>
