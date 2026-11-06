@@ -41,10 +41,15 @@ def test_overdue_by_group_brand():
     late = row("ALPHA", "MIX - 08/2026", "", "EZS", group="GRP", nmv=800, k=160, gmv=1000,
                status="Đã xuất hóa đơn + Chờ tiền")
     late[19] = "HĐ: 101 (01/10/2026)"          # hạn = 01/10 + 10 ngày làm việc = 15/10
+    late2 = row("ALPHA2", "MIX - 08/2026", "", "EZS", group="GRP", nmv=500, k=40, gmv=600,
+                status="Đã xuất hóa đơn + Chờ tiền")
+    late2[19] = "HĐ: 101 (01/10/2026)"         # cùng HĐ 101 -> cộng K vào 1 dòng
     paid = row("BETA", "MIX - 08/2026", "", "EZS", nmv=800, k=99, gmv=1000, status="Done trả tiền")
     paid[19] = "HĐ: 102 (01/10/2026)"
-    s = summarize(sheet(late, paid), today=date(2026, 10, 25))
-    assert {b: (x.amount, x.days) for b, x in s.overdue.items()} == {"GRP": (Decimal(160), 10)}   # theo GROUP BRAND
+    s = summarize(sheet(late, late2, paid), today=date(2026, 10, 25))
+    assert {b: (x.amount, x.days) for b, x in s.overdue.items()} == {"GRP": (Decimal(200), 10)}   # theo GROUP BRAND
+    i = s.overdue["GRP"].invoices["HĐ số 101"]
+    assert (i.issued_on, i.amount, i.days, i.fee) == (date(2026, 10, 1), Decimal(200), 10, Decimal(1))  # 200×0,05%×10
 
 
 def test_fbjt_date_month_first_only_when_unambiguous():

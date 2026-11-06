@@ -1,9 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { Fragment, useCallback, useEffect, useState } from "react"
 
 import { type ApiError, getSummary, type SummaryBucket, type SummaryOut } from "@/lib/api"
-import { pct, vnd } from "@/lib/format"
+import { pct, vnd, vnDate } from "@/lib/format"
 
 import { handleAuthError, useIdToken } from "./useIdToken"
 
@@ -102,6 +102,7 @@ export default function SummaryDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [drill, setDrill] = useState<Drill | null>(null)
+  const [lateOpen, setLateOpen] = useState<string | null>(null)
   const toggle = (d: Drill) => () => setDrill((cur) => (cur === d ? null : d))
 
   const load = useCallback(async () => {
@@ -206,13 +207,51 @@ export default function SummaryDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {data.overdue.map((o) => (
-                  <tr key={o.brand}>
-                    <th scope="row">{o.brand}</th>
-                    <td>{vnd(o.amount)}</td>
-                    <td className={o.days_late > 30 ? "late-bad" : undefined}>{o.days_late}</td>
-                  </tr>
-                ))}
+                {data.overdue.map((o) => {
+                  const open = lateOpen === o.brand
+                  return (
+                    <Fragment key={o.brand}>
+                      <tr>
+                        <th scope="row">
+                          <button type="button" className="row-toggle" aria-expanded={open}
+                                  onClick={() => setLateOpen(open ? null : o.brand)}>
+                            {open ? "▾" : "▸"} {o.brand}
+                          </button>
+                        </th>
+                        <td>{vnd(o.amount)}</td>
+                        <td className={o.days_late > 30 ? "late-bad" : undefined}>{o.days_late}</td>
+                      </tr>
+                      {open && (
+                        <tr className="row-detail">
+                          <td colSpan={3}>
+                            <table className="num-table">
+                              <thead>
+                                <tr>
+                                  <th scope="col">Hoá đơn</th>
+                                  <th scope="col">Ngày phát hành</th>
+                                  <th scope="col">CMS tổng hoá đơn (cột K)</th>
+                                  <th scope="col">Số ngày trễ</th>
+                                  <th scope="col">Lãi phạt chậm tạm tính (0,05%/ngày)</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {o.invoices.map((r) => (
+                                  <tr key={r.invoice}>
+                                    <th scope="row">{r.invoice}</th>
+                                    <td>{vnDate(r.issued_on)}</td>
+                                    <td>{vnd(r.amount)}</td>
+                                    <td className={r.days_late > 30 ? "late-bad" : undefined}>{r.days_late}</td>
+                                    <td>{vnd(r.late_fee)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
