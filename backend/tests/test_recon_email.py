@@ -145,6 +145,7 @@ def test_email2_tables_follow_entity_and_live_reply_threads():
         BbntMail(**{**MAIL.__dict__, "brands": ["<script>"]}), "x", "y")
     msg = build_live_reply(MAIL, LOOP, now=NOW, signer="Hiệp Phạm")
     assert recipients(msg)[0] == "kt@brand.vn" and set(recipients(msg)[1:]) == set(INTERNAL_CC)
+    assert {"fb@hannaholala.com", "accounting.payment@hannaholala.com", "bod@hannaholala.com"} <= set(recipients(msg))
     assert msg["Subject"] == "Re: BBNT BDAY T5" and msg["In-Reply-To"] == "<b@x>"
     html = msg.get_body(("html",)).get_content()
     assert "<b>216.000</b>" in html and "trước ngày <b>02/11/2026</b>" in html and "Hiệp Phạm" in html
