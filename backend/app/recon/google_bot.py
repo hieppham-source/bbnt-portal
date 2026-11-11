@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from app.core.calculation import normalize_text
@@ -63,6 +63,15 @@ def refresh_access_token(env: BotEnv, session: Any = None) -> str:
     if not token:
         raise BotConfigError("Google không trả access token")
     return str(token)
+
+
+def gmail_access_token(sheets_token: str, env: Mapping[str, str] = os.environ, session: Any = None) -> str:
+    """Hộp thư gửi/đọc loopmail: ``RECON_GMAIL_REFRESH_TOKEN`` (vd affiliate.finance@, cùng OAuth client) nếu có,
+    không thì dùng chung token Sheets. Thư brand trả lời về đúng hộp thư này nên bot vẫn thấy reply."""
+    gmail = env.get("RECON_GMAIL_REFRESH_TOKEN", "").strip()
+    if not gmail:
+        return sheets_token
+    return refresh_access_token(replace(BotEnv.from_env(env), refresh_token=gmail), session)
 
 
 def _header_index(rows: Sequence[Sequence[Any]], must: Sequence[str]) -> tuple[int, dict[str, int]]:

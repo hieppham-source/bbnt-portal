@@ -11,7 +11,8 @@
 | Tên | Ở đâu | Dùng cho |
 |---|---|---|
 | `DATABASE_URL` | Render env + GitHub Secrets (worker) | Neon Postgres |
-| `RECON_GOOGLE_CLIENT_ID`, `RECON_GOOGLE_CLIENT_SECRET`, `RECON_GOOGLE_REFRESH_TOKEN` | GitHub Secrets (worker), Render env (API preview) | Token hộp thư gửi |
+| `RECON_GOOGLE_CLIENT_ID`, `RECON_GOOGLE_CLIENT_SECRET`, `RECON_GOOGLE_REFRESH_TOKEN` | GitHub Secrets (worker), Render env (API preview) | Token bot đọc/ghi Sheets + Drive (và Gmail nếu không có token riêng) |
+| `RECON_GMAIL_REFRESH_TOKEN` (tuỳ chọn) | GitHub Secrets (worker) | Token hộp thư gửi/đọc loopmail (vd affiliate.finance@, cùng OAuth client, scope gmail.send + gmail.readonly). Trống = dùng chung token trên |
 | `RECON_APPROVERS` | Render env | Email được duyệt trên portal |
 | `RECON_FBJT_ID` | Render env + GitHub Variables | FB.JT: brand, hợp đồng, Bên A, email lấy từ tab **DATA BRAND** (từ 04/11/2026); Sheet master chỉ còn PHAP_NHAN + MAPPING. Render để trống = portal dùng tab BRAND/HOP_DONG của master như cũ |
 | `RECON_SEND_MODE` (`off`/`review`/`auto`), `RECON_SHEET_WRITE` (`off`/`on`) | Worker env | Bật theo phase; mặc định `off` |
