@@ -11,6 +11,7 @@ from app.recon.google_bot import (
     BotEnv,
     BotSheets,
     chip_url,
+    gmail_access_token,
     parse_brand_op,
     parse_contracts,
     parse_order_links,
@@ -198,3 +199,10 @@ def test_contract_brand_match_wins_over_group():
     assert find(["AVENE"], "DKSH") == ["01082024/DKSH-EZ-FB"]
     assert find(["CERAVE"], "LDB") == []
     assert find(["TEFAL", "BOSCH"], "WELLHOME") == ["01082025/TEFAL-EZS-FB", "28112025/BOSCH-EZS-FB"]
+
+
+def test_gmail_token_falls_back_to_sheets_token_or_uses_own_refresh_token():
+    assert gmail_access_token("SHEETS-AT", ENV) == "SHEETS-AT"          # không cấu hình -> dùng chung
+    s = Session(Resp(200, {"access_token": "GMAIL-AT"}))
+    assert gmail_access_token("SHEETS-AT", {**ENV, "RECON_GMAIL_REFRESH_TOKEN": "GMAIL-RT"}, s) == "GMAIL-AT"
+    assert s.calls[0][1]["data"]["refresh_token"] == "GMAIL-RT"

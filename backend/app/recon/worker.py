@@ -449,7 +449,7 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
 
     from app.recon.emailer import EmailSettings, GmailApi
     from app.recon.fbjt import WRITABLE
-    from app.recon.google_bot import BotConfigError
+    from app.recon.google_bot import BotConfigError, gmail_access_token
     from app.recon.runner import (
         LOCK_KEY,
         persist,
@@ -482,6 +482,9 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
             st = persist(conn, plans, by_row, tab=tab, now=now, run_id=run_id)
             s = requests.Session()
             s.headers["Authorization"] = f"Bearer {live.token}"
+            g = requests.Session()           # Gmail có thể là hộp thư khác (RECON_GMAIL_REFRESH_TOKEN)
+            gmail_token = gmail_access_token(live.token) if mail.mode != "off" else live.token
+            g.headers["Authorization"] = f"Bearer {gmail_token}"
             if write_ok:
                 write_back(conn, lambda ws: write_cells(s, fbjt_id, tab, ws),
                            {k: outcome.columns.letter(k) for k in WRITABLE}, now=now, run_id=run_id, st=st)
@@ -489,10 +492,10 @@ def _run_once(today: date, now: datetime, scope_from: date) -> list[str]:
             # (có thể vài chục nhóm) chiếm hết lượt của thư nghiệm thu
             send_acceptance_emails(conn, plans,
                                    lambda p, at: mail_for(p, at, by_row, live.brand_emails, live.render),
-                                   GmailApi(s), mail, now=now, run_id=run_id, st=st)
+                                   GmailApi(g), mail, now=now, run_id=run_id, st=st)
             send_status_requests(conn, plans, lambda p: status_mail_for(p, by_row, live.brand_emails),
-                                 GmailApi(s), mail, now=now, run_id=run_id, st=st)
-            run_followups(conn, outcome.rows, outcome.done, tab, live.brand_emails, GmailApi(s), mail, now=now,
+                                 GmailApi(g), mail, now=now, run_id=run_id, st=st)
+            run_followups(conn, outcome.rows, outcome.done, tab, live.brand_emails, GmailApi(g), mail, now=now,
                           run_id=run_id, st=st)
             if write_ok:          # U: chỉ tiến lên, tối đa "Đã done BBNT + Chờ KT xuất HĐ nháp"
                 write_status(conn, outcome.rows, lambda ws: write_cells(s, fbjt_id, tab, ws),
