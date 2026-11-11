@@ -34,7 +34,9 @@ TEST_DOMAIN = "@hannaholala.com"
 INTERNAL_CC = ("fb@hannaholala.com", "mcnolala@gmail.com", "admin@hannaholala.com", "trang.nguyen@hannaholala.com",
                "huong.nguyen@hannaholala.com", "hieu.nguyen@hannaholala.com", "tu.bui@hannaholala.com",
                "accounting02@hannaholala.com", "accounting01@hannaholala.com", "accounting04@hannaholala.com",
-               "huong.phan@hannaholala.com")
+               "huong.phan@hannaholala.com",
+               # thư gửi từ affiliate.finance@ (11/11) -> brand reply-all thì 2 hộp thư này cũng theo dõi được
+               "accounting.payment@hannaholala.com", "bod@hannaholala.com")
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 SEND_FROM, SEND_TO = time(8, 0), time(18, 0)      # khung giờ tự gửi, T2–T6 giờ VN
