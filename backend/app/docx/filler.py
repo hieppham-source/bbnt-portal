@@ -24,6 +24,9 @@ Cú pháp template (soạn thẳng trong Word được, kể cả khi Word cắt
   LUÔN toàn bộ nội dung ở giữa (kể cả 2 marker). Dùng để ẩn bảng TỔNG HỢP sản phẩm top-level khi BBNT đã tách
   riêng từng camp (mỗi camp đã có bảng + TỔNG CỘNG riêng trong brand_section) — tránh lặp lại 1 bảng tổng
   không cần thiết. Template không có marker thì bỏ qua hoàn toàn, không ảnh hưởng gì.
+* ``{{breakdown_total_start}}``/``{{breakdown_total_end}}``: ngược với summary — chỉ GIỮ khi ``show_summary=False``
+  (BBNT tách brand/camp: câu "Tổng doanh thu thực nhận cuối cùng của chiến dịch là ... = Tổng doanh thu của các
+  bảng trên" thay cho bảng tổng, anh Hiệp chốt 13/11/2026).
 
 Bảo đảm:
 
@@ -68,6 +71,8 @@ BRAND_START = "brand_section_start"
 BRAND_END = "brand_section_end"
 SUMMARY_START = "summary_section_start"
 SUMMARY_END = "summary_section_end"
+BREAKDOWN_START = "breakdown_total_start"
+BREAKDOWN_END = "breakdown_total_end"
 
 #: Chuỗi ngày tháng pháp lý — KHÔNG được thay đổi bởi quá trình fill.
 LEGAL_DATE_RE = re.compile(
@@ -160,7 +165,7 @@ class BbntDocxRenderer:
                     if any(a < m.end() and m.start() < b for a, b in legal):
                         raise TemplateError(f"Token {m.group(0)} nằm trong chuỗi ngày pháp lý: {text!r}")
                     name = m.group(1)
-                    if name in (BRAND_START, BRAND_END, SUMMARY_START, SUMMARY_END):
+                    if name in (BRAND_START, BRAND_END, SUMMARY_START, SUMMARY_END, BREAKDOWN_START, BREAKDOWN_END):
                         continue
                     if name.startswith(ITEM_PREFIX):
                         row = _row_of(p)
@@ -207,6 +212,7 @@ class BbntDocxRenderer:
         rng = random.Random(seed)
 
         self._apply_optional_section(doc, SUMMARY_START, SUMMARY_END, keep=show_summary)
+        self._apply_optional_section(doc, BREAKDOWN_START, BREAKDOWN_END, keep=not show_summary)
         brand_item_rows = self._expand_brand_sections(doc, brands, rng)
         rows = self._expand_item_rows(doc, items, rng) + brand_item_rows
         for root in iter_story_roots(doc):
@@ -336,29 +342,30 @@ class BbntDocxRenderer:
         trong docstring module) — ``keep=True`` chỉ xoá 2 paragraph marker, GIỮ NGUYÊN nội dung ở giữa;
         ``keep=False`` xoá LUÔN toàn bộ nội dung ở giữa (kể cả 2 marker). Template không có marker -> bỏ qua."""
         for root in iter_story_roots(doc):
-            start = end = None
-            for child in root:
-                if child.tag != W_P:
-                    continue
-                text = paragraph_text(child).strip()
-                if start is None and text == "{{" + start_tag + "}}":
-                    start = child
-                elif start is not None and text == "{{" + end_tag + "}}":
-                    end = child
+            while True:                     # template có thể có nhiều cặp marker cùng tên (vd SASSY: 2 bảng A/B tổng)
+                start = end = None
+                for child in root:
+                    if child.tag != W_P:
+                        continue
+                    text = paragraph_text(child).strip()
+                    if start is None and text == "{{" + start_tag + "}}":
+                        start = child
+                    elif start is not None and text == "{{" + end_tag + "}}":
+                        end = child
+                        break
+                if start is None or end is None:
                     break
-            if start is None or end is None:
-                continue
-            if keep:
-                for el in (start, end):
+                if keep:
+                    for el in (start, end):
+                        el.getparent().remove(el)
+                    continue
+                middle: list[etree._Element] = []
+                node = start.getnext()
+                while node is not None and node is not end:
+                    middle.append(node)
+                    node = node.getnext()
+                for el in (start, *middle, end):
                     el.getparent().remove(el)
-                continue
-            middle: list[etree._Element] = []
-            node = start.getnext()
-            while node is not None and node is not end:
-                middle.append(node)
-                node = node.getnext()
-            for el in (start, *middle, end):
-                el.getparent().remove(el)
 
     @staticmethod
     def _snapshot_legal_text(doc: DocxDocument) -> list[tuple[etree._Element, list[str]]]:

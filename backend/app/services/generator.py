@@ -402,10 +402,10 @@ class BbntGenerator:
         if renderer is not None:
             try:
                 brands = [BrandBlock(b["values"], b["items"]) for b in brand_blocks]
-                # breakdown_kind == "camp" -> ẩn bảng TỔNG HỢP sản phẩm top-level (chỉ còn bảng riêng từng
-                # camp), xem docstring đầu module + ``app.docx.filler`` (summary_section_start/end).
+                # Tách brand/camp -> ẩn bảng TỔNG sản phẩm + bảng A/B tổng, thay bằng 1 câu tổng doanh thu
+                # (anh Hiệp chốt 13/11/2026), xem ``app.docx.filler`` (summary / breakdown_total section).
                 result.content = renderer.render(values, item_rows, brands=brands,
-                                                 show_summary=breakdown_kind != "camp",
+                                                 show_summary=not brands,
                                                  strip_comments=inp.strip_comments).content
             except (MissingValueError, LegalTextModifiedError) as exc:
                 raise fail("RENDER_FAILED", f"Không điền được template: {exc}", status=500) from exc

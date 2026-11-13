@@ -50,10 +50,10 @@ class PartyA:
 
 
 def program_name(campaign_name: str, number: BbntNumber) -> str:
-    """'BDAY BDAY-05' — KHÔNG tự ghép brand/scope vào đầu (người làm tự gõ brand vào Tên chương trình nếu
-    muốn, tránh bị lặp 2 lần tên brand trên BBNT). Phần cuối là đuôi biên bản nghiệm thu người làm tự gõ (xem
-    ``app.core.numbering.normalize_suffix``), KHÔNG còn là kỳ nghiệm thu."""
-    return " ".join(x for x in (campaign_name.strip(), number.suffix) if x)
+    """Đúng tên chương trình người làm gõ — KHÔNG tự ghép brand/scope, KHÔNG ghép đuôi biên bản nghiệm thu
+    (anh Hiệp chốt 13/11/2026; đuôi chỉ nằm trong số BBNT). ``number`` giữ để không đổi chữ ký hàm."""
+    del number
+    return campaign_name.strip()
 
 
 def signature_name(representative: str) -> str:
