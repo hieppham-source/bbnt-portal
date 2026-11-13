@@ -106,6 +106,11 @@ def c14n(data: bytes) -> bytes:
 
 
 def _strip_markers(body, start_tag: str, end_tag: str, *, keep_middle: bool) -> None:
+    while _strip_one(body, start_tag, end_tag, keep_middle=keep_middle):      # có thể nhiều cặp marker cùng tên
+        pass
+
+
+def _strip_one(body, start_tag: str, end_tag: str, *, keep_middle: bool) -> bool:
     start = end = None
     for child in body:
         if child.tag != W_P:
@@ -117,7 +122,7 @@ def _strip_markers(body, start_tag: str, end_tag: str, *, keep_middle: bool) -> 
             end = child
             break
     if start is None or end is None:
-        return
+        return False
     middle = []
     node = start.getnext()
     while node is not None and node is not end:
@@ -126,6 +131,7 @@ def _strip_markers(body, start_tag: str, end_tag: str, *, keep_middle: bool) -> 
     to_remove = (start, end) if keep_middle else (start, *middle, end)
     for el in to_remove:
         el.getparent().remove(el)
+    return True
 
 
 def strip_brand_section(d: docx.document.Document) -> docx.document.Document:
@@ -137,6 +143,7 @@ def strip_brand_section(d: docx.document.Document) -> docx.document.Document:
     body = d.element.body
     _strip_markers(body, filler_mod.BRAND_START, filler_mod.BRAND_END, keep_middle=False)
     _strip_markers(body, filler_mod.SUMMARY_START, filler_mod.SUMMARY_END, keep_middle=True)
+    _strip_markers(body, filler_mod.BREAKDOWN_START, filler_mod.BREAKDOWN_END, keep_middle=False)
     return d
 
 

@@ -80,7 +80,7 @@ def test_preview_organica(env):
     b = r.json()
     assert b["bbnt_number"] == "06.26/BBNT-ORGANICA-EZ-FB-05"
     assert b["file_name"] == "BBNT_06.26_BBNT-ORGANICA-EZ-FB-05.docx"
-    assert b["program_name"] == "BDAY 05" and b["issue_date"] == "2026-06-03"   # KHÔNG tự ghép brand vào đầu
+    assert b["program_name"] == "BDAY" and b["issue_date"] == "2026-06-03"   # KHÔNG ghép brand, KHÔNG ghép đuôi BBNT
     assert b["contract"]["contract_no"] == "01/2026/HĐDV/EZS-ORGANICA" and b["contract"]["master_row"] == 2
     f = {k: Decimal(str(v)) if isinstance(v, (int, float, str)) and k != "tax_mode" and k != "tax_label"
          and k != "total_payable_words" else v for k, v in b["figures"].items()}
@@ -246,7 +246,10 @@ def test_generate_returns_docx_and_stores_nothing(env, tmp_path, monkeypatch):
     assert "BBNT_06.26_BBNT-ORGANICA-EZ-FB-05.docx" in r.headers["content-disposition"]
     assert r.headers["cache-control"] == "no-store"
     text = docx_text(r.content)
-    for s in ("06.26/BBNT-ORGANICA-EZ-FB-05", "BDAY 05", "01/2026/HĐDV/EZS-ORGANICA",
+    assert "(Chương trình BDAY )" in text and "BDAY 05" not in text     # tên chương trình không kèm đuôi BBNT
+    assert "Tổng doanh thu của chương trình sau chiến dịch là" in text   # 1 brand: giữ bảng + câu tổng cũ
+    assert "Tổng doanh thu thực nhận cuối cùng" not in text
+    for s in ("06.26/BBNT-ORGANICA-EZ-FB-05", "01/2026/HĐDV/EZS-ORGANICA",
               "CÔNG TY TNHH ORGANICA (MẪU)", "0071000123456", "816.480", "Serum Organica"):
         assert s in text, s
     assert "{{" not in text

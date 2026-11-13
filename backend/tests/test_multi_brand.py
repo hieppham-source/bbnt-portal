@@ -100,15 +100,18 @@ def test_generate_fills_separate_brand_sections_in_docx(env):
     assert "1. Shiseido" in text and "2. Anessa" in text
     assert text.index("1. Shiseido") < text.index("2. Anessa")      # heading theo đúng thứ tự brand trong group
     assert "Ultimune" in text and "Anessa Gold" in text
-    # 3 bảng sản phẩm: khối Shiseido, khối Anessa, rồi bảng TỔNG CỘNG ngoài khối gộp đủ cả 2 (xem product
-    # tables theo đúng thứ tự tài liệu — python-docx giữ nguyên thứ tự bảng top-level)
+    # Chỉ 2 bảng sản phẩm + 2 bảng A/B (mỗi brand 1 khối), KHÔNG còn bảng TỔNG gộp — thay bằng 1 câu tổng
+    # doanh thu (anh Hiệp chốt 13/11/2026)
     d = docx.Document(io.BytesIO(r.content))
     product_tables = [t for t in d.tables if t.rows[0].cells[0].text == "TÊN SẢN PHẨM"]
-    assert len(product_tables) == 3
+    assert len(product_tables) == 2
+    assert len([t for t in d.tables if t.rows[0].cells[0].text.startswith("Doanh thu ước tính")]) == 2
     names = lambda t: [t.rows[i].cells[0].text for i in range(1, len(t.rows) - 1)]       # noqa: E731
     assert names(product_tables[0]) == ["Ultimune"]
     assert names(product_tables[1]) == ["Anessa Gold"]
-    assert names(product_tables[2]) == ["Ultimune", "Anessa Gold"]      # TỔNG gộp cả 2 brand
+    assert "Tổng doanh thu thực nhận cuối cùng của chiến dịch là:" in text
+    assert "= Tổng doanh thu của các bảng trên" in text
+    assert "Tổng doanh thu của chương trình sau chiến dịch là" not in text
     # hoa hồng vẫn tính trên TỔNG, không phải riêng brand
     assert text.count("2.250.000") >= 1
 
