@@ -496,7 +496,7 @@ def run_followups(conn: psycopg.Connection, rows: Sequence[FbjtRow], done: Seque
     if settings.mode == "off":
         return
     cal = _calendar(conn)
-    threads = sync_replies(conn, [c for c in cases if c.state is not State.DONE], gmail)
+    threads = sync_replies(conn, [c for c in cases if c.state in FOLLOW], gmail)
 
     def brand_to(fc: FollowCase) -> list[str] | str:
         return _brand_to(fc.brands, brand_emails)

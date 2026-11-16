@@ -58,7 +58,9 @@ khi chọn `report=true`. Lỗi bất ngờ chỉ in tên lỗi (ẩn chi tiết
 3. Tạo **bản sao FB.JT**, share Editor cho hộp thư bot. Đặt tạm `RECON_FBJT_ID` = ID bản sao, `RECON_SHEET_WRITE=on`,
    `RECON_SHEET_WRITE_ID` = ID bản sao → chạy, kiểm tra ô I/K/M trên bản sao + bảng `sheet_write`, `audit_log`.
    (Dùng DB riêng cho lần thử này, hoặc xoá dữ liệu thử trước khi chuyển sang FB.JT thật.)
-4. Chỉ khi bước 3 đúng: đặt lại `RECON_FBJT_ID` = FB.JT thật và `RECON_SHEET_WRITE_ID` = cùng ID đó.
+4. Chỉ khi bước 3 đúng: đặt lại `RECON_FBJT_ID` = FB.JT thật và `RECON_SHEET_WRITE_ID` = cùng ID đó — ở **cả 2 nơi**:
+   GitHub Variables (bot) **và Render env** (tab Tổng quan đọc biến của Render). 16/11/2026: Render còn trỏ bản sao
+   → Tổng quan báo nợ sai (ZENYUM HĐ 1021 đã Done).
 
 Tắt ghi ngay: xoá Variable `RECON_SHEET_WRITE` (hoặc đặt `off`).
 

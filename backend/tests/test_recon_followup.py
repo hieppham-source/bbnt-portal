@@ -196,3 +196,41 @@ def test_confirmed_case_gets_no_bbnt_reminder(conn, run):
     conn.execute("UPDATE recon_case SET brand_confirmed_at = now()")
     follow(conn, gmail, now=at(3))
     assert one(conn, "SELECT count(*) FROM email_outbox WHERE kind = 'CONFIRM_BBNT_REMINDER'")[0] == 0
+
+
+# ------------------------------------------- U = Done -> case DONE ở mọi trạng thái (lỗi ZENYUM HĐ 1021, 16/11/2026)
+def test_done_before_case_creates_no_case(conn, run):
+    from .test_recon_runner import go
+    go(conn, run, row(*ORG, status="Done trả tiền"))
+    assert one(conn, "SELECT count(*) FROM recon_case") == (0,)
+
+
+def test_done_after_case_outside_follow_states_closes_case(conn, run):
+    _figures_written(conn, run)                                       # case chưa gửi EMAIL 2, KAM làm tay tới Done
+    assert follow(conn, FakeGmail(), status="Done", env={}).stage_moves == 1
+    assert one(conn, "SELECT state FROM recon_case") == ("DONE",)
+
+
+def test_done_with_messy_spacing_and_case_closes_case(conn, run):
+    gmail = FakeGmail()
+    sent_case(conn, run, gmail)
+    follow(conn, gmail, status=ISSUED_U, note="HĐ: 1021 (20/08/2026)", k=100, now=at(28))
+    n = len(gmail.sent)
+    follow(conn, gmail, status="  done   TRẢ tiền ", note="HĐ: 1021 (20/08/2026)", k=100, now=at(5))
+    assert one(conn, "SELECT state FROM recon_case") == ("DONE",)
+    assert len(gmail.sent) == n                                       # đã Done -> không nhắc thanh toán nữa
+
+
+def test_invoice_on_many_rows_one_done_counts_only_unpaid_row():
+    from app.recon.followup import FollowCase
+    from app.recon.state_machine import Stage, State
+    from app.recon.summary import summarize
+    paid = row("ZENYUM", "MIX - 06/2026", "", "EZS", k=50, status=" Done trả tiền ")
+    unpaid = row("ZENYUM", "WELLNESS - 06/2026", "", "EZS", k=30, status=ISSUED_U)
+    paid[19] = unpaid[19] = "HĐ: 1371 (12/10/2026)"
+    out = parse_rows(sheet(paid, unpaid))
+    assert [r.campaign for r in out.done] == ["MIX - 06/2026"]
+    late = summarize(sheet(paid, unpaid), today=datetime(2026, 11, 16).date()).overdue["ZENYUM"]
+    assert late.amount == Decimal(30)                                 # dòng Done không tính nợ / lãi phạt
+    fc = FollowCase(uuid.uuid4(), State.AWAITING_PAYMENT, 1, None, ["ZENYUM"], "x", out.rows, 1, NOW)
+    assert fc.stage is Stage.INVOICE_ISSUED and fc.k_total == Decimal(30)   # còn dòng chưa Done -> chưa DONE

@@ -92,7 +92,9 @@ class FollowCase:
 
 def load_cases(conn: psycopg.Connection, rows: Sequence[FbjtRow], done: Sequence[FbjtRow], tab: str
                ) -> list[FollowCase]:
-    """Case đang theo dõi + các dòng FB.JT của nó (nối qua ``sheet_row``: brand + campaign)."""
+    """Case chưa DONE + các dòng FB.JT của nó (nối qua ``sheet_row``: brand + campaign). Nạp cả case ngoài
+    ``FOLLOW`` (vd KAM làm tay khi case WAITING / NEEDS_REVIEW) để kế toán đổi U = Done là case DONE; luật chuyển
+    trạng thái chặn các bước khác của case ngoài ``FOLLOW``, nhắc thư chỉ chạy cho ``FOLLOW``."""
     live = {(brand_key(r.brand), campaign_key(r.campaign)): r for r in rows}
     finished = {(brand_key(r.brand), campaign_key(r.campaign)) for r in done}
     out: dict[uuid.UUID, FollowCase] = {}
@@ -100,8 +102,8 @@ def load_cases(conn: psycopg.Connection, rows: Sequence[FbjtRow], done: Sequence
             "SELECT c.id, c.state, c.state_version, c.gmail_thread_id, c.brand_codes, c.campaign, sr.brand_key, "
             "sr.campaign_key, (SELECT max(at) FROM state_transition t WHERE t.case_id = c.id "
             "AND t.to_state = c.state), c.brand_confirmed_at IS NOT NULL "
-            "FROM recon_case c JOIN sheet_row sr ON sr.case_id = c.id AND sr.tab = %s WHERE c.state = ANY(%s) "
-            "ORDER BY c.id", (tab, [s.value for s in FOLLOW])).fetchall():
+            "FROM recon_case c JOIN sheet_row sr ON sr.case_id = c.id AND sr.tab = %s WHERE c.state <> 'DONE' "
+            "ORDER BY c.id", (tab,)).fetchall():
         fc = out.setdefault(cid, FollowCase(cid, State(state), ver, thread, brands, camp, [], 0, since, confirmed))
         if (bk, ck) in live:
             fc.rows.append(live[(bk, ck)])
